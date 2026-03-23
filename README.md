@@ -82,9 +82,11 @@ d.InsertOrIgnore("users", "name, email", "'Alice', 'alice@test.com'")
 import _ "github.com/catgoose/fraggle/driver/postgres"
 
 db, dialect, _ := fraggle.OpenURL(ctx, "postgres://user:pass@localhost:5432/myapp?sslmode=disable")
+db, dialect, _ := fraggle.OpenURL(ctx, "sqlite://:memory:")
+db, dialect, _ := fraggle.OpenURL(ctx, "sqlserver://user:pass@host:1433?database=erp")
 ```
 
-`OpenURL` detects the engine from the URL scheme and returns a raw `*sql.DB` plus the matching `Dialect`. Supported schemes: `postgres://`, `sqlite://`, `sqlserver://`.
+`OpenURL` detects the engine from the URL scheme and returns a raw `*sql.DB` plus the matching `Dialect`. Supported schemes: `postgres://` (`postgresql://`), `sqlite://` (`sqlite3://`), `sqlserver://` (`mssql://`).
 
 For SQLite, `OpenSQLite` opens a database with sensible defaults (WAL mode, 30s busy timeout, single-connection pool):
 
@@ -349,9 +351,11 @@ dbrepo.SetDeleteAudit(&t.DeletedAt, &t.DeletedBy, currentUser)
 // State management
 dbrepo.SetStatus(&t.Status, "published")
 dbrepo.SetArchive(&t.ArchivedAt)
-dbrepo.ClearArchive(&t.ArchivedAt)   // sets sql.NullTime to NULL
+dbrepo.ClearArchive(&t.ArchivedAt)     // sets sql.NullTime.Valid = false (SQL NULL)
 dbrepo.SetExpiry(&t.ExpiresAt, future)
-dbrepo.ClearExpiry(&t.ExpiresAt)     // sets sql.NullTime to NULL
+dbrepo.ClearExpiry(&t.ExpiresAt)       // sets sql.NullTime.Valid = false (SQL NULL)
+dbrepo.SetReplacement(&t.ReplacedByID, newID)
+dbrepo.ClearReplacement(&t.ReplacedByID)  // sets sql.NullInt64.Valid = false (SQL NULL)
 ```
 
 For deterministic tests, override the clock:

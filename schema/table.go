@@ -1,3 +1,7 @@
+// Package schema provides a table definition DSL for declaring database schemas in Go.
+// One table definition drives DDL generation, column lists, seed data, and schema snapshots
+// across all supported dialects. Use Snapshot and LiveSnapshot to compare declared schemas
+// against live databases for drift detection.
 package schema
 
 import (

@@ -3,6 +3,7 @@ package dbrepo
 import (
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -55,7 +56,13 @@ func (w *WhereBuilder) OrIf(ok bool, condition string, args ...any) *WhereBuilde
 	return w.Or(condition, args...)
 }
 
+// validIdentifier matches safe SQL column names: letters, digits, underscores, and dots
+// (for qualified names like "t.Name"). Must start with a letter or underscore.
+var validIdentifier = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_.]*$`)
+
 // Search adds a LIKE search condition across the given fields.
+// Field names are validated to prevent SQL injection — only alphanumeric characters,
+// underscores, and dots (for qualified names) are allowed.
 func (w *WhereBuilder) Search(search string, fields ...string) *WhereBuilder {
 	if search == "" || len(fields) == 0 {
 		return w
@@ -63,7 +70,13 @@ func (w *WhereBuilder) Search(search string, fields ...string) *WhereBuilder {
 	pattern := "%" + search + "%"
 	var conditions []string
 	for _, field := range fields {
+		if !validIdentifier.MatchString(field) {
+			continue
+		}
 		conditions = append(conditions, fmt.Sprintf("%s LIKE @SearchPattern", field))
+	}
+	if len(conditions) == 0 {
+		return w
 	}
 	w.And("("+strings.Join(conditions, " OR ")+")",
 		sql.Named("Search", search),
@@ -90,47 +103,69 @@ func (w *WhereBuilder) HasConditions() bool {
 	return len(w.clauses) > 0
 }
 
+// colName returns the first non-empty override, or the default.
+func colName(defaultName string, override []string) string {
+	if len(override) > 0 && override[0] != "" {
+		return override[0]
+	}
+	return defaultName
+}
+
 // NotDeleted adds a "DeletedAt IS NULL" condition for soft-delete filtering.
-func (w *WhereBuilder) NotDeleted() *WhereBuilder {
-	return w.And("DeletedAt IS NULL")
+// Pass an optional column name to override the default "DeletedAt".
+func (w *WhereBuilder) NotDeleted(col ...string) *WhereBuilder {
+	return w.And(colName("DeletedAt", col) + " IS NULL")
 }
 
 // NotExpired adds a condition that filters out expired records.
-func (w *WhereBuilder) NotExpired() *WhereBuilder {
-	return w.And("(ExpiresAt IS NULL OR ExpiresAt > CURRENT_TIMESTAMP)")
+// Pass an optional column name to override the default "ExpiresAt".
+func (w *WhereBuilder) NotExpired(col ...string) *WhereBuilder {
+	c := colName("ExpiresAt", col)
+	return w.And(fmt.Sprintf("(%s IS NULL OR %s > CURRENT_TIMESTAMP)", c, c))
 }
 
 // HasStatus adds a "Status = @Status" condition.
-func (w *WhereBuilder) HasStatus(status string) *WhereBuilder {
-	return w.And("Status = @Status", sql.Named("Status", status))
+// Pass an optional column name to override the default "Status".
+func (w *WhereBuilder) HasStatus(status string, col ...string) *WhereBuilder {
+	c := colName("Status", col)
+	return w.And(c+" = @Status", sql.Named("Status", status))
 }
 
 // IsRoot adds a "ParentID IS NULL" condition for tree root nodes.
-func (w *WhereBuilder) IsRoot() *WhereBuilder {
-	return w.And("ParentID IS NULL")
+// Pass an optional column name to override the default "ParentID".
+func (w *WhereBuilder) IsRoot(col ...string) *WhereBuilder {
+	return w.And(colName("ParentID", col) + " IS NULL")
 }
 
 // HasParent adds a "ParentID = @ParentID" condition.
-func (w *WhereBuilder) HasParent(parentID int64) *WhereBuilder {
-	return w.And("ParentID = @ParentID", sql.Named("ParentID", parentID))
+// Pass an optional column name to override the default "ParentID".
+func (w *WhereBuilder) HasParent(parentID int64, col ...string) *WhereBuilder {
+	c := colName("ParentID", col)
+	return w.And(c+" = @ParentID", sql.Named("ParentID", parentID))
 }
 
 // NotReplaced adds a "ReplacedByID IS NULL" condition for current (non-replaced) records.
-func (w *WhereBuilder) NotReplaced() *WhereBuilder {
-	return w.And("ReplacedByID IS NULL")
+// Pass an optional column name to override the default "ReplacedByID".
+func (w *WhereBuilder) NotReplaced(col ...string) *WhereBuilder {
+	return w.And(colName("ReplacedByID", col) + " IS NULL")
 }
 
 // ReplacedBy adds a "ReplacedByID = @ReplacedByID" condition.
-func (w *WhereBuilder) ReplacedBy(id int64) *WhereBuilder {
-	return w.And("ReplacedByID = @ReplacedByID", sql.Named("ReplacedByID", id))
+// Pass an optional column name to override the default "ReplacedByID".
+func (w *WhereBuilder) ReplacedBy(id int64, col ...string) *WhereBuilder {
+	c := colName("ReplacedByID", col)
+	return w.And(c+" = @ReplacedByID", sql.Named("ReplacedByID", id))
 }
 
 // NotArchived adds an "ArchivedAt IS NULL" condition for archive filtering.
-func (w *WhereBuilder) NotArchived() *WhereBuilder {
-	return w.And("ArchivedAt IS NULL")
+// Pass an optional column name to override the default "ArchivedAt".
+func (w *WhereBuilder) NotArchived(col ...string) *WhereBuilder {
+	return w.And(colName("ArchivedAt", col) + " IS NULL")
 }
 
 // HasVersion adds a "Version = @Version" condition for optimistic locking.
-func (w *WhereBuilder) HasVersion(version int) *WhereBuilder {
-	return w.And("Version = @Version", sql.Named("Version", version))
+// Pass an optional column name to override the default "Version".
+func (w *WhereBuilder) HasVersion(version int, col ...string) *WhereBuilder {
+	c := colName("Version", col)
+	return w.And(c+" = @Version", sql.Named("Version", version))
 }

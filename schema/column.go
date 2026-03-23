@@ -141,7 +141,7 @@ func (c ColumnDef) Name() string { return c.name }
 func (c ColumnDef) ddl(d fraggle.Dialect) string {
 	var parts []string
 
-	parts = append(parts, c.name)
+	parts = append(parts, d.QuoteIdentifier(c.name))
 	parts = append(parts, c.typeFn(d))
 
 	if c.notNull {
@@ -158,7 +158,8 @@ func (c ColumnDef) ddl(d fraggle.Dialect) string {
 	}
 
 	if c.refTable != "" && c.refColumn != "" {
-		parts = append(parts, fmt.Sprintf("REFERENCES %s(%s)", c.refTable, c.refColumn))
+		parts = append(parts, fmt.Sprintf("REFERENCES %s(%s)",
+			d.QuoteIdentifier(c.refTable), d.QuoteIdentifier(c.refColumn)))
 	}
 
 	return strings.Join(parts, " ")

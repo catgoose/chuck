@@ -1,10 +1,19 @@
 package dbrepo
 
-import "time"
+import (
+	"database/sql"
+	"time"
+)
 
-// GetNow returns the current time.
+// NowFunc is the function used to get the current time.
+// Override this in tests to freeze or control time:
+//
+//	dbrepo.NowFunc = func() time.Time { return fixedTime }
+var NowFunc = time.Now
+
+// GetNow returns the current time via NowFunc.
 func GetNow() time.Time {
-	return time.Now()
+	return NowFunc()
 }
 
 // SetCreateTimestamps sets CreatedAt and UpdatedAt to current time.
@@ -99,10 +108,11 @@ func SetReplacement(replacedByID *int64, id int64) {
 	}
 }
 
-// ClearReplacement sets ReplacedByID to zero value.
-func ClearReplacement(replacedByID *int64) {
+// ClearReplacement sets a sql.NullInt64 to NULL (Valid = false).
+func ClearReplacement(replacedByID *sql.NullInt64) {
 	if replacedByID != nil {
-		*replacedByID = 0
+		replacedByID.Valid = false
+		replacedByID.Int64 = 0
 	}
 }
 
@@ -113,16 +123,18 @@ func SetArchive(archivedAt *time.Time) {
 	}
 }
 
-// ClearArchive sets ArchivedAt to zero value (unarchives).
-func ClearArchive(archivedAt *time.Time) {
+// ClearArchive sets a sql.NullTime to NULL (Valid = false) to unarchive.
+func ClearArchive(archivedAt *sql.NullTime) {
 	if archivedAt != nil {
-		*archivedAt = time.Time{}
+		archivedAt.Valid = false
+		archivedAt.Time = time.Time{}
 	}
 }
 
-// ClearExpiry sets ExpiresAt to zero value (removes expiry).
-func ClearExpiry(expiresAt *time.Time) {
+// ClearExpiry sets a sql.NullTime to NULL (Valid = false) to remove expiry.
+func ClearExpiry(expiresAt *sql.NullTime) {
 	if expiresAt != nil {
-		*expiresAt = time.Time{}
+		expiresAt.Valid = false
+		expiresAt.Time = time.Time{}
 	}
 }

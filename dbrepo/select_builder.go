@@ -64,7 +64,11 @@ func (s *SelectBuilder) WithDialect(d fraggle.Dialect) *SelectBuilder {
 // Build returns the complete SQL query string and the collected arguments.
 func (s *SelectBuilder) Build() (query string, args []any) {
 	var parts []string
-	parts = append(parts, fmt.Sprintf("SELECT %s FROM %s", s.cols, s.table))
+	tableName := s.table
+	if s.dialect != nil {
+		tableName = s.dialect.QuoteIdentifier(s.table)
+	}
+	parts = append(parts, fmt.Sprintf("SELECT %s FROM %s", s.cols, tableName))
 
 	if s.where.HasConditions() {
 		parts = append(parts, s.where.String())
@@ -95,7 +99,11 @@ func (s *SelectBuilder) Build() (query string, args []any) {
 // CountQuery returns a COUNT(*) query using the same FROM and WHERE clauses.
 func (s *SelectBuilder) CountQuery() (query string, args []any) {
 	var parts []string
-	parts = append(parts, fmt.Sprintf("SELECT COUNT(*) FROM %s", s.table))
+	tableName := s.table
+	if s.dialect != nil {
+		tableName = s.dialect.QuoteIdentifier(s.table)
+	}
+	parts = append(parts, fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName))
 
 	if s.where.HasConditions() {
 		parts = append(parts, s.where.String())

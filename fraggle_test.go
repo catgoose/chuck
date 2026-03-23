@@ -170,7 +170,7 @@ func TestMSSQLDialect(t *testing.T) {
 		idx := d.CreateIndexIfNotExists("idx_users_mail", "Users", "Mail")
 		assert.Contains(t, idx, "IF NOT EXISTS")
 		assert.Contains(t, idx, "sys.indexes")
-		assert.Contains(t, idx, "CREATE INDEX [idx_users_mail] ON [Users](Mail)")
+		assert.Contains(t, idx, "CREATE INDEX [idx_users_mail] ON [Users]([Mail])")
 	})
 
 	t.Run("SchemaQueries", func(t *testing.T) {
@@ -178,6 +178,14 @@ func TestMSSQLDialect(t *testing.T) {
 		assert.Contains(t, d.TableExistsQuery(), "OBJECT_ID(?)")
 		assert.Contains(t, d.TableColumnsQuery(), "INFORMATION_SCHEMA.COLUMNS")
 		assert.Contains(t, d.TableColumnsQuery(), "TABLE_NAME = ?")
+	})
+
+	t.Run("InsertOrIgnore", func(t *testing.T) {
+		stmt := d.InsertOrIgnore("Users", "Name, Email", "'Alice', 'alice@test.com'")
+		assert.Contains(t, stmt, "BEGIN TRY")
+		assert.Contains(t, stmt, "INSERT INTO [Users]")
+		assert.Contains(t, stmt, "'Alice'")
+		assert.Contains(t, stmt, "END CATCH")
 	})
 }
 
@@ -241,15 +249,15 @@ func TestSQLiteDialect(t *testing.T) {
 
 	t.Run("CreateTableIfNotExists", func(t *testing.T) {
 		create := d.CreateTableIfNotExists("Users", "id INTEGER PRIMARY KEY")
-		assert.Equal(t, "CREATE TABLE IF NOT EXISTS Users (id INTEGER PRIMARY KEY)", create)
+		assert.Equal(t, `CREATE TABLE IF NOT EXISTS "Users" (id INTEGER PRIMARY KEY)`, create)
 	})
 
 	t.Run("DropTableIfExists", func(t *testing.T) {
-		assert.Equal(t, "DROP TABLE IF EXISTS Users", d.DropTableIfExists("Users"))
+		assert.Equal(t, `DROP TABLE IF EXISTS "Users"`, d.DropTableIfExists("Users"))
 	})
 
 	t.Run("CreateIndexIfNotExists", func(t *testing.T) {
-		assert.Equal(t, "CREATE INDEX IF NOT EXISTS idx_users_mail ON Users(Mail)",
+		assert.Equal(t, `CREATE INDEX IF NOT EXISTS "idx_users_mail" ON "Users"("Mail")`,
 			d.CreateIndexIfNotExists("idx_users_mail", "Users", "Mail"))
 	})
 
@@ -257,6 +265,11 @@ func TestSQLiteDialect(t *testing.T) {
 		assert.Contains(t, d.TableExistsQuery(), "sqlite_master")
 		assert.Contains(t, d.TableExistsQuery(), "name=?")
 		assert.Contains(t, d.TableColumnsQuery(), "pragma_table_info(?)")
+	})
+
+	t.Run("InsertOrIgnore", func(t *testing.T) {
+		stmt := d.InsertOrIgnore("Users", "Name, Email", "'Alice', 'alice@test.com'")
+		assert.Equal(t, `INSERT OR IGNORE INTO "Users" (Name, Email) VALUES ('Alice', 'alice@test.com')`, stmt)
 	})
 }
 
@@ -319,15 +332,15 @@ func TestPostgresDialect(t *testing.T) {
 
 	t.Run("CreateTableIfNotExists", func(t *testing.T) {
 		create := d.CreateTableIfNotExists("Users", "id SERIAL PRIMARY KEY")
-		assert.Equal(t, "CREATE TABLE IF NOT EXISTS Users (id SERIAL PRIMARY KEY)", create)
+		assert.Equal(t, `CREATE TABLE IF NOT EXISTS "Users" (id SERIAL PRIMARY KEY)`, create)
 	})
 
 	t.Run("DropTableIfExists", func(t *testing.T) {
-		assert.Equal(t, "DROP TABLE IF EXISTS Users", d.DropTableIfExists("Users"))
+		assert.Equal(t, `DROP TABLE IF EXISTS "Users"`, d.DropTableIfExists("Users"))
 	})
 
 	t.Run("CreateIndexIfNotExists", func(t *testing.T) {
-		assert.Equal(t, "CREATE INDEX IF NOT EXISTS idx_users_mail ON Users(Mail)",
+		assert.Equal(t, `CREATE INDEX IF NOT EXISTS "idx_users_mail" ON "Users"("Mail")`,
 			d.CreateIndexIfNotExists("idx_users_mail", "Users", "Mail"))
 	})
 
@@ -342,6 +355,11 @@ func TestPostgresDialect(t *testing.T) {
 		assert.Contains(t, cq, "table_schema = 'public'")
 		assert.Contains(t, cq, "$1")
 		assert.Contains(t, cq, "ORDER BY ordinal_position")
+	})
+
+	t.Run("InsertOrIgnore", func(t *testing.T) {
+		stmt := d.InsertOrIgnore("Users", "Name, Email", "'Alice', 'alice@test.com'")
+		assert.Equal(t, `INSERT INTO "Users" (Name, Email) VALUES ('Alice', 'alice@test.com') ON CONFLICT DO NOTHING`, stmt)
 	})
 }
 
@@ -400,7 +418,8 @@ func TestDialectConsistency(t *testing.T) {
 			idx := d.CreateIndexIfNotExists("idx_test", "my_table", "col1, col2")
 			assert.Contains(t, idx, "idx_test")
 			assert.Contains(t, idx, "my_table")
-			assert.Contains(t, idx, "col1, col2")
+			assert.Contains(t, idx, "col1")
+			assert.Contains(t, idx, "col2")
 		})
 	}
 }

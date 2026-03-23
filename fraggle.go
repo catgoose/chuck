@@ -3,7 +3,10 @@
 // while keeping SQL visible and explicit.
 package fraggle
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Engine identifies a database engine.
 type Engine string
@@ -58,16 +61,19 @@ type Dialect interface {
 	//   Postgres: "TIMESTAMPTZ"
 	TimestampType() string
 
-	// StringType returns the column type for a string with the given max length.
-	//   MSSQL:    "NVARCHAR(255)"
-	//   SQLite:   "TEXT"
-	//   Postgres: "VARCHAR(255)"
+	// StringType returns the preferred string column type for the engine.
+	// Use this when you want the engine's best string representation.
+	//   MSSQL:    "NVARCHAR(255)" — Unicode-aware, preferred for text data
+	//   SQLite:   "TEXT"          — SQLite ignores length, all strings are TEXT
+	//   Postgres: "TEXT"          — Postgres TEXT has no performance penalty vs VARCHAR
 	StringType(maxLen int) string
 
-	// VarcharType returns the column type for a varchar with the given max length.
-	//   MSSQL:    "VARCHAR(255)"
-	//   SQLite:   "TEXT"
-	//   Postgres: "VARCHAR(255)"
+	// VarcharType returns an exact VARCHAR(n) column type.
+	// Use this when you need an explicit length-limited VARCHAR, e.g. for
+	// compatibility with existing schemas or when the distinction matters.
+	//   MSSQL:    "VARCHAR(255)"  — non-Unicode; use StringType for NVARCHAR
+	//   SQLite:   "TEXT"          — SQLite ignores length constraints
+	//   Postgres: "VARCHAR(255)"  — equivalent to TEXT with a CHECK, rarely needed
 	VarcharType(maxLen int) string
 
 	// IntType returns the column type for an integer.
@@ -96,9 +102,10 @@ type Dialect interface {
 
 	// ReturningClause returns a RETURNING clause for INSERT/UPDATE statements,
 	// or empty string if the engine doesn't support it.
-	//   MSSQL:    ""
-	//   SQLite:   "RETURNING id"  (SQLite 3.35+)
-	//   Postgres: "RETURNING id"
+	// The columns parameter specifies which columns to return (e.g., "id" or "id, created_at").
+	//   MSSQL:    ""                          (not supported)
+	//   SQLite:   "RETURNING <columns>"       (SQLite 3.35+)
+	//   Postgres: "RETURNING <columns>"
 	ReturningClause(columns string) string
 
 	// QuoteIdentifier quotes a SQL identifier (table name, column name, index name)
@@ -164,6 +171,22 @@ type Dialect interface {
 	// The query accepts a single positional parameter for the table name
 	// and returns rows with a "name" column.
 	TableColumnsQuery() string
+
+	// InsertOrIgnore returns an idempotent INSERT statement that silently
+	// skips rows that would violate a unique constraint.
+	//   SQLite:   "INSERT OR IGNORE INTO t (cols) VALUES (vals)"
+	//   Postgres: "INSERT INTO t (cols) VALUES (vals) ON CONFLICT DO NOTHING"
+	//   MSSQL:    wraps the insert in an IF NOT EXISTS check using the first column
+	InsertOrIgnore(table, columns, values string) string
+}
+
+// QuoteColumns splits a comma-separated column list and quotes each identifier.
+func QuoteColumns(d Dialect, columns string) string {
+	parts := strings.Split(columns, ",")
+	for i, p := range parts {
+		parts[i] = d.QuoteIdentifier(strings.TrimSpace(p))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // New returns a Dialect for the given engine.

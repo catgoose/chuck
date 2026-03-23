@@ -8,11 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	_ "github.com/denisenkom/go-mssqldb"
-	_ "github.com/lib/pq"
-	_ "github.com/mattn/go-sqlite3"
 )
+
+// NOTE: This package does not register any database drivers. Import the
+// driver sub-packages for the engines you need:
+//
+//	import _ "github.com/catgoose/fraggle/driver/sqlite"
+//	import _ "github.com/catgoose/fraggle/driver/postgres"
+//	import _ "github.com/catgoose/fraggle/driver/mssql"
 
 // OpenURL opens a database connection from a URL string. The scheme determines
 // the driver and dialect:

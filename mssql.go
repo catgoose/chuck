@@ -75,7 +75,7 @@ func (d MSSQLDialect) CreateIndexIfNotExists(indexName, table, columns string) s
 	qt := d.QuoteIdentifier(table)
 	return fmt.Sprintf(
 		"IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = N'%s' AND object_id = OBJECT_ID(N'%s')) CREATE INDEX %s ON %s(%s)",
-		strings.ReplaceAll(indexName, "'", "''"), strings.ReplaceAll(table, "'", "''"), qi, qt, columns,
+		strings.ReplaceAll(indexName, "'", "''"), strings.ReplaceAll(table, "'", "''"), qi, qt, QuoteColumns(d, columns),
 	)
 }
 
@@ -89,4 +89,11 @@ func (MSSQLDialect) TableExistsQuery() string {
 
 func (MSSQLDialect) TableColumnsQuery() string {
 	return "SELECT COLUMN_NAME AS name FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ?"
+}
+
+func (d MSSQLDialect) InsertOrIgnore(table, columns, values string) string {
+	return fmt.Sprintf(
+		"BEGIN TRY INSERT INTO %s (%s) VALUES (%s) END TRY BEGIN CATCH IF ERROR_NUMBER() <> 2627 AND ERROR_NUMBER() <> 2601 THROW END CATCH",
+		d.QuoteIdentifier(table), columns, values,
+	)
 }

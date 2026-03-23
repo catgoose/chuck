@@ -13,8 +13,12 @@ type UniqueConstraint struct {
 }
 
 // ddl renders the constraint as a DDL fragment.
-func (uc UniqueConstraint) ddl() string {
-	return fmt.Sprintf("UNIQUE (%s)", strings.Join(uc.columns, ", "))
+func (uc UniqueConstraint) ddl(d fraggle.Dialect) string {
+	quoted := make([]string, len(uc.columns))
+	for i, col := range uc.columns {
+		quoted[i] = d.QuoteIdentifier(col)
+	}
+	return fmt.Sprintf("UNIQUE (%s)", strings.Join(quoted, ", "))
 }
 
 // SeedRow represents a row of seed data as column name → value pairs.
@@ -149,10 +153,10 @@ func (t *TableDef) HasSeedData() bool {
 	return len(t.seedRows) > 0
 }
 
-// SeedSQL returns INSERT statements for all seed rows.
+// SeedSQL returns idempotent INSERT statements for all seed rows using the
+// dialect's InsertOrIgnore method.
 // Only columns present in the SeedRow are included — missing columns use their DB defaults.
-// Uses INSERT OR IGNORE to be idempotent.
-func (t *TableDef) SeedSQL() []string {
+func (t *TableDef) SeedSQL(d fraggle.Dialect) []string {
 	if len(t.seedRows) == 0 {
 		return nil
 	}
@@ -171,12 +175,11 @@ func (t *TableDef) SeedSQL() []string {
 		if len(cols) == 0 {
 			continue
 		}
-		stmt := fmt.Sprintf("INSERT OR IGNORE INTO %s (%s) VALUES (%s)",
+		stmts = append(stmts, d.InsertOrIgnore(
 			t.Name,
 			strings.Join(cols, ", "),
 			strings.Join(vals, ", "),
-		)
-		stmts = append(stmts, stmt)
+		))
 	}
 	return stmts
 }
@@ -239,7 +242,7 @@ func (t *TableDef) columnBody(d fraggle.Dialect) string {
 		colLines = append(colLines, "\t\t\t"+c.ddl(d))
 	}
 	for _, uc := range t.uniqueConstraints {
-		colLines = append(colLines, "\t\t\t"+uc.ddl())
+		colLines = append(colLines, "\t\t\t"+uc.ddl(d))
 	}
 	return strings.Join(colLines, ",\n")
 }
@@ -247,7 +250,7 @@ func (t *TableDef) columnBody(d fraggle.Dialect) string {
 // CreateSQL returns the CREATE TABLE statement followed by CREATE INDEX statements.
 func (t *TableDef) CreateSQL(d fraggle.Dialect) []string {
 	create := fmt.Sprintf("\n\t\tCREATE TABLE %s (\n%s\n\t\t)",
-		t.Name, t.columnBody(d))
+		d.QuoteIdentifier(t.Name), t.columnBody(d))
 
 	stmts := []string{create}
 	for _, idx := range t.indexes {

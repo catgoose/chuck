@@ -43,16 +43,17 @@ func (PostgresDialect) DecimalType(precision, scale int) string {
 	return fmt.Sprintf("NUMERIC(%d,%d)", precision, scale)
 }
 
-func (PostgresDialect) CreateTableIfNotExists(table, body string) string {
-	return fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", table, body)
+func (d PostgresDialect) CreateTableIfNotExists(table, body string) string {
+	return fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", d.QuoteIdentifier(table), body)
 }
 
-func (PostgresDialect) DropTableIfExists(table string) string {
-	return fmt.Sprintf("DROP TABLE IF EXISTS %s", table)
+func (d PostgresDialect) DropTableIfExists(table string) string {
+	return fmt.Sprintf("DROP TABLE IF EXISTS %s", d.QuoteIdentifier(table))
 }
 
-func (PostgresDialect) CreateIndexIfNotExists(indexName, table, columns string) string {
-	return fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s(%s)", indexName, table, columns)
+func (d PostgresDialect) CreateIndexIfNotExists(indexName, table, columns string) string {
+	return fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s(%s)",
+		d.QuoteIdentifier(indexName), d.QuoteIdentifier(table), QuoteColumns(d, columns))
 }
 
 func (PostgresDialect) LastInsertIDQuery() string { return "" }
@@ -64,4 +65,8 @@ func (PostgresDialect) TableExistsQuery() string {
 
 func (PostgresDialect) TableColumnsQuery() string {
 	return "SELECT column_name AS name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 ORDER BY ordinal_position"
+}
+
+func (d PostgresDialect) InsertOrIgnore(table, columns, values string) string {
+	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT DO NOTHING", d.QuoteIdentifier(table), columns, values)
 }

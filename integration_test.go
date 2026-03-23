@@ -8,6 +8,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	_ "github.com/catgoose/fraggle/driver/mssql"
+	_ "github.com/catgoose/fraggle/driver/postgres"
+	_ "github.com/catgoose/fraggle/driver/sqlite"
 )
 
 // dialectIntegrationTest runs the same DDL/DML lifecycle against any dialect+db.
@@ -96,6 +100,46 @@ func dialectIntegrationTest(t *testing.T, db *sql.DB, d Dialect) {
 		require.NoError(t, err)
 	})
 
+	t.Run("ForeignKeyInlineReferences", func(t *testing.T) {
+		// Create a parent table with IDENTITY/auto-increment PK
+		parentBody := "id " + d.AutoIncrement() + ", label " + d.VarcharType(100) + " NOT NULL"
+		parentSQL := d.CreateTableIfNotExists("fraggle_fk_parent", parentBody)
+		_, err := db.ExecContext(ctx, parentSQL)
+		require.NoError(t, err, "create parent table with auto-increment PK")
+
+		// Create a child table with inline REFERENCES to the parent's IDENTITY column
+		childBody := "id " + d.AutoIncrement() +
+			", parent_id " + d.IntType() + " NOT NULL REFERENCES " +
+			d.QuoteIdentifier("fraggle_fk_parent") + "(" + d.QuoteIdentifier("id") + ")" +
+			", value " + d.VarcharType(100)
+		childSQL := d.CreateTableIfNotExists("fraggle_fk_child", childBody)
+		_, err = db.ExecContext(ctx, childSQL)
+		require.NoError(t, err, "create child table with inline REFERENCES on IDENTITY column")
+
+		// Insert a parent row
+		insertParent := "INSERT INTO " + d.QuoteIdentifier("fraggle_fk_parent") +
+			" (label) VALUES (" + d.Placeholder(1) + ")"
+		_, err = db.ExecContext(ctx, insertParent, "parent1")
+		require.NoError(t, err)
+
+		// Insert a child row referencing the parent
+		insertChild := "INSERT INTO " + d.QuoteIdentifier("fraggle_fk_child") +
+			" (parent_id, value) VALUES (" + d.Placeholder(1) + ", " + d.Placeholder(2) + ")"
+		_, err = db.ExecContext(ctx, insertChild, 1, "child1")
+		require.NoError(t, err)
+
+		// Verify the relationship
+		var count int
+		err = db.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM "+d.QuoteIdentifier("fraggle_fk_child")+" WHERE parent_id = "+d.Placeholder(1), 1).Scan(&count)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+
+		// Clean up (child first due to FK constraint)
+		_, _ = db.ExecContext(ctx, d.DropTableIfExists("fraggle_fk_child"))
+		_, _ = db.ExecContext(ctx, d.DropTableIfExists("fraggle_fk_parent"))
+	})
+
 	t.Run("DropTable", func(t *testing.T) {
 		dropSQL := d.DropTableIfExists("fraggle_test")
 		_, err := db.ExecContext(ctx, dropSQL)
@@ -136,6 +180,8 @@ func TestIntegrationPostgres(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	// Clean up in case a previous run failed mid-test
+	_, _ = db.ExecContext(ctx, d.DropTableIfExists("fraggle_fk_child"))
+	_, _ = db.ExecContext(ctx, d.DropTableIfExists("fraggle_fk_parent"))
 	_, _ = db.ExecContext(ctx, d.DropTableIfExists("fraggle_test"))
 
 	dialectIntegrationTest(t, db, d)
@@ -153,6 +199,8 @@ func TestIntegrationMSSQL(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	// Clean up in case a previous run failed mid-test
+	_, _ = db.ExecContext(ctx, d.DropTableIfExists("fraggle_fk_child"))
+	_, _ = db.ExecContext(ctx, d.DropTableIfExists("fraggle_fk_parent"))
 	_, _ = db.ExecContext(ctx, d.DropTableIfExists("fraggle_test"))
 
 	dialectIntegrationTest(t, db, d)

@@ -44,16 +44,17 @@ func (SQLiteDialect) JSONType() string    { return "TEXT" }
 
 func (SQLiteDialect) DecimalType(_, _ int) string { return "REAL" }
 
-func (SQLiteDialect) CreateTableIfNotExists(table, body string) string {
-	return fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", table, body)
+func (d SQLiteDialect) CreateTableIfNotExists(table, body string) string {
+	return fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", d.QuoteIdentifier(table), body)
 }
 
-func (SQLiteDialect) DropTableIfExists(table string) string {
-	return fmt.Sprintf("DROP TABLE IF EXISTS %s", table)
+func (d SQLiteDialect) DropTableIfExists(table string) string {
+	return fmt.Sprintf("DROP TABLE IF EXISTS %s", d.QuoteIdentifier(table))
 }
 
-func (SQLiteDialect) CreateIndexIfNotExists(indexName, table, columns string) string {
-	return fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s(%s)", indexName, table, columns)
+func (d SQLiteDialect) CreateIndexIfNotExists(indexName, table, columns string) string {
+	return fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s(%s)",
+		d.QuoteIdentifier(indexName), d.QuoteIdentifier(table), QuoteColumns(d, columns))
 }
 
 func (SQLiteDialect) LastInsertIDQuery() string { return "" }
@@ -66,4 +67,8 @@ func (SQLiteDialect) TableExistsQuery() string {
 
 func (SQLiteDialect) TableColumnsQuery() string {
 	return "SELECT name FROM pragma_table_info(?)"
+}
+
+func (d SQLiteDialect) InsertOrIgnore(table, columns, values string) string {
+	return fmt.Sprintf("INSERT OR IGNORE INTO %s (%s) VALUES (%s)", d.QuoteIdentifier(table), columns, values)
 }

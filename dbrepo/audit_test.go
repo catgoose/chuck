@@ -1,6 +1,7 @@
 package dbrepo
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 
@@ -74,8 +75,10 @@ func TestArchive(t *testing.T) {
 	SetArchive(&archivedAt)
 	assert.False(t, archivedAt.IsZero())
 
-	ClearArchive(&archivedAt)
-	assert.True(t, archivedAt.IsZero())
+	nullTime := sql.NullTime{Time: archivedAt, Valid: true}
+	ClearArchive(&nullTime)
+	assert.False(t, nullTime.Valid)
+	assert.True(t, nullTime.Time.IsZero())
 }
 
 func TestExpiry(t *testing.T) {
@@ -84,8 +87,10 @@ func TestExpiry(t *testing.T) {
 	SetExpiry(&expiresAt, future)
 	assert.Equal(t, future, expiresAt)
 
-	ClearExpiry(&expiresAt)
-	assert.True(t, expiresAt.IsZero())
+	nullTime := sql.NullTime{Time: expiresAt, Valid: true}
+	ClearExpiry(&nullTime)
+	assert.False(t, nullTime.Valid)
+	assert.True(t, nullTime.Time.IsZero())
 }
 
 func TestReplacement(t *testing.T) {
@@ -93,8 +98,10 @@ func TestReplacement(t *testing.T) {
 	SetReplacement(&replacedBy, 42)
 	assert.Equal(t, int64(42), replacedBy)
 
-	ClearReplacement(&replacedBy)
-	assert.Equal(t, int64(0), replacedBy)
+	nullInt := sql.NullInt64{Int64: replacedBy, Valid: true}
+	ClearReplacement(&nullInt)
+	assert.False(t, nullInt.Valid)
+	assert.Equal(t, int64(0), nullInt.Int64)
 }
 
 func TestNilSafety(t *testing.T) {
@@ -112,7 +119,27 @@ func TestNilSafety(t *testing.T) {
 	SetArchive(nil)
 	ClearArchive(nil)
 	ClearExpiry(nil)
+	// Verify nil safety for sql.Null* variants
+	var nilNullInt64 *sql.NullInt64
+	ClearReplacement(nilNullInt64)
+	var nilNullTime *sql.NullTime
+	ClearArchive(nilNullTime)
+	ClearExpiry(nilNullTime)
 	SetCreateAudit(nil, nil, "")
 	SetUpdateAudit(nil, "")
 	SetDeleteAudit(nil, nil, "")
+}
+
+func TestNowFuncOverride(t *testing.T) {
+	fixed := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	original := NowFunc
+	NowFunc = func() time.Time { return fixed }
+	defer func() { NowFunc = original }()
+
+	assert.Equal(t, fixed, GetNow())
+
+	var created, updated time.Time
+	SetCreateTimestamps(&created, &updated)
+	assert.Equal(t, fixed, created)
+	assert.Equal(t, fixed, updated)
 }

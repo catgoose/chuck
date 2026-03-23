@@ -145,7 +145,7 @@ func TestUniqueColumns(t *testing.T) {
 
 	d := fraggle.SQLiteDialect{}
 	stmts := table.CreateIfNotExistsSQL(d)
-	assert.Contains(t, stmts[0], "UNIQUE (LeftID, RightID)")
+	assert.Contains(t, stmts[0], `UNIQUE ("LeftID", "RightID")`)
 }
 
 func TestSeedData(t *testing.T) {
@@ -163,10 +163,28 @@ func TestSeedData(t *testing.T) {
 	assert.True(t, table.HasSeedData())
 	assert.Len(t, table.SeedRows(), 2)
 
-	stmts := table.SeedSQL()
-	require.Len(t, stmts, 2)
-	assert.Contains(t, stmts[0], "INSERT OR IGNORE INTO Statuses")
-	assert.Contains(t, stmts[0], "'active'")
+	t.Run("sqlite", func(t *testing.T) {
+		stmts := table.SeedSQL(fraggle.SQLiteDialect{})
+		require.Len(t, stmts, 2)
+		assert.Contains(t, stmts[0], `INSERT OR IGNORE INTO "Statuses"`)
+		assert.Contains(t, stmts[0], "'active'")
+	})
+
+	t.Run("postgres", func(t *testing.T) {
+		stmts := table.SeedSQL(fraggle.PostgresDialect{})
+		require.Len(t, stmts, 2)
+		assert.Contains(t, stmts[0], `INSERT INTO "Statuses"`)
+		assert.Contains(t, stmts[0], "ON CONFLICT DO NOTHING")
+		assert.Contains(t, stmts[0], "'active'")
+	})
+
+	t.Run("mssql", func(t *testing.T) {
+		stmts := table.SeedSQL(fraggle.MSSQLDialect{})
+		require.Len(t, stmts, 2)
+		assert.Contains(t, stmts[0], "INSERT INTO [Statuses]")
+		assert.Contains(t, stmts[0], "BEGIN TRY")
+		assert.Contains(t, stmts[0], "'active'")
+	})
 }
 
 func TestColumnDDL(t *testing.T) {
@@ -175,7 +193,7 @@ func TestColumnDDL(t *testing.T) {
 	t.Run("basic", func(t *testing.T) {
 		c := Col("Name", TypeVarchar(255))
 		ddl := c.ddl(d)
-		assert.Equal(t, "Name VARCHAR(255)", ddl)
+		assert.Equal(t, `"Name" VARCHAR(255)`, ddl)
 	})
 
 	t.Run("not_null_unique", func(t *testing.T) {
@@ -200,7 +218,7 @@ func TestColumnDDL(t *testing.T) {
 	t.Run("references", func(t *testing.T) {
 		c := Col("UserID", TypeInt()).References("Users", "ID")
 		ddl := c.ddl(d)
-		assert.Contains(t, ddl, "REFERENCES Users(ID)")
+		assert.Contains(t, ddl, `REFERENCES "Users"("ID")`)
 	})
 
 	t.Run("auto_increment", func(t *testing.T) {
@@ -217,7 +235,7 @@ func TestTableFactories(t *testing.T) {
 	t.Run("MappingTable", func(t *testing.T) {
 		table := NewMappingTable("UserRoles", "UserID", "RoleID")
 		stmts := table.CreateIfNotExistsSQL(d)
-		assert.Contains(t, stmts[0], "UNIQUE (UserID, RoleID)")
+		assert.Contains(t, stmts[0], `UNIQUE ("UserID", "RoleID")`)
 		cols := table.SelectColumns()
 		assert.Contains(t, cols, "UserID")
 		assert.Contains(t, cols, "RoleID")

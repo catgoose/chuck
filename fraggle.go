@@ -186,12 +186,24 @@ type Dialect interface {
 }
 
 // QuoteColumns splits a comma-separated column list, normalizes and quotes each identifier.
+// Sort direction suffixes (ASC, DESC) are preserved and re-appended after quoting.
 func QuoteColumns(d Dialect, columns string) string {
 	parts := strings.Split(columns, ",")
-	for i, p := range parts {
-		parts[i] = d.QuoteIdentifier(d.NormalizeIdentifier(strings.TrimSpace(p)))
+	quoted := make([]string, len(parts))
+	for i, part := range parts {
+		part = strings.TrimSpace(part)
+		suffix := ""
+		upper := strings.ToUpper(part)
+		if strings.HasSuffix(upper, " DESC") {
+			suffix = " DESC"
+			part = strings.TrimSpace(part[:len(part)-5])
+		} else if strings.HasSuffix(upper, " ASC") {
+			suffix = " ASC"
+			part = strings.TrimSpace(part[:len(part)-4])
+		}
+		quoted[i] = d.QuoteIdentifier(d.NormalizeIdentifier(part)) + suffix
 	}
-	return strings.Join(parts, ", ")
+	return strings.Join(quoted, ", ")
 }
 
 // New returns a Dialect for the given engine.

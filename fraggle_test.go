@@ -432,6 +432,67 @@ func TestDialectConsistency(t *testing.T) {
 	}
 }
 
+func TestQuoteColumns(t *testing.T) {
+	dialects := []struct {
+		name    string
+		dialect Dialect
+		// quote wraps the expected column name in the dialect's quoting style
+		quote func(string) string
+	}{
+		{
+			name:    "SQLite",
+			dialect: SQLiteDialect{},
+			quote:   func(s string) string { return `"` + s + `"` },
+		},
+		{
+			name:    "Postgres",
+			dialect: PostgresDialect{},
+			quote:   func(s string) string { return `"` + s + `"` },
+		},
+		{
+			name:    "MSSQL",
+			dialect: MSSQLDialect{},
+			quote:   func(s string) string { return "[" + s + "]" },
+		},
+	}
+
+	for _, dd := range dialects {
+		t.Run(dd.name, func(t *testing.T) {
+			d := dd.dialect
+			q := dd.quote
+
+			t.Run("single column no suffix", func(t *testing.T) {
+				assert.Equal(t, q("col1"), QuoteColumns(d, "col1"))
+			})
+
+			t.Run("multi column no suffix", func(t *testing.T) {
+				expected := q("col1") + ", " + q("col2")
+				assert.Equal(t, expected, QuoteColumns(d, "col1, col2"))
+			})
+
+			t.Run("DESC suffix preserved", func(t *testing.T) {
+				expected := q("col1") + ", " + q("col2") + " DESC"
+				assert.Equal(t, expected, QuoteColumns(d, "col1, col2 DESC"))
+			})
+
+			t.Run("ASC and DESC suffixes preserved", func(t *testing.T) {
+				expected := q("col1") + " ASC, " + q("col2") + " DESC"
+				assert.Equal(t, expected, QuoteColumns(d, "col1 ASC, col2 DESC"))
+			})
+
+			t.Run("case insensitive suffix normalized to uppercase", func(t *testing.T) {
+				expected := q("col1") + ", " + q("col2") + " DESC"
+				assert.Equal(t, expected, QuoteColumns(d, "col1, col2 desc"))
+			})
+
+			t.Run("ASC lowercase normalized", func(t *testing.T) {
+				expected := q("col1") + " ASC"
+				assert.Equal(t, expected, QuoteColumns(d, "col1 asc"))
+			})
+		})
+	}
+}
+
 // TestDialectViaNew ensures New returns dialects that behave identically
 // to directly constructed structs.
 func TestDialectViaNew(t *testing.T) {

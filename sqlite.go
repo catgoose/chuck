@@ -2,6 +2,16 @@ package fraggle
 
 import "fmt"
 
+// Compile-time interface checks.
+var (
+	_ Dialect    = SQLiteDialect{}
+	_ TypeMapper = SQLiteDialect{}
+	_ DDLWriter  = SQLiteDialect{}
+	_ QueryWriter = SQLiteDialect{}
+	_ Identifier = SQLiteDialect{}
+	_ Inspector  = SQLiteDialect{}
+)
+
 // SQLiteDialect implements Dialect for SQLite.
 type SQLiteDialect struct{}
 

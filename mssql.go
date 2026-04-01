@@ -5,6 +5,16 @@ import (
 	"strings"
 )
 
+// Compile-time interface checks.
+var (
+	_ Dialect    = MSSQLDialect{}
+	_ TypeMapper = MSSQLDialect{}
+	_ DDLWriter  = MSSQLDialect{}
+	_ QueryWriter = MSSQLDialect{}
+	_ Identifier = MSSQLDialect{}
+	_ Inspector  = MSSQLDialect{}
+)
+
 // MSSQLDialect implements Dialect for Microsoft SQL Server.
 type MSSQLDialect struct{}
 

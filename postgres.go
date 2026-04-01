@@ -2,6 +2,16 @@ package fraggle
 
 import "fmt"
 
+// Compile-time interface checks.
+var (
+	_ Dialect    = PostgresDialect{}
+	_ TypeMapper = PostgresDialect{}
+	_ DDLWriter  = PostgresDialect{}
+	_ QueryWriter = PostgresDialect{}
+	_ Identifier = PostgresDialect{}
+	_ Inspector  = PostgresDialect{}
+)
+
 // PostgresDialect implements Dialect for PostgreSQL.
 type PostgresDialect struct{}
 

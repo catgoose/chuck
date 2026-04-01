@@ -64,7 +64,7 @@ func InsertInto(table string, cols ...string) string {
 // ColumnsQ joins column names into a comma-separated list with dialect quoting.
 //
 //	ColumnsQ(d, "ID", "Name", "Email") => `"ID", "Name", "Email"` (Postgres/SQLite)
-func ColumnsQ(d fraggle.Dialect, cols ...string) string {
+func ColumnsQ(d fraggle.Identifier, cols ...string) string {
 	quoted := make([]string, len(cols))
 	for i, c := range cols {
 		quoted[i] = d.QuoteIdentifier(c)
@@ -75,7 +75,7 @@ func ColumnsQ(d fraggle.Dialect, cols ...string) string {
 // SetClauseQ builds a SET fragment for UPDATE statements with dialect quoting.
 //
 //	SetClauseQ(d, "Name", "Email") => `"Name" = @Name, "Email" = @Email` (Postgres/SQLite)
-func SetClauseQ(d fraggle.Dialect, cols ...string) string {
+func SetClauseQ(d fraggle.Identifier, cols ...string) string {
 	parts := make([]string, len(cols))
 	for i, c := range cols {
 		parts[i] = fmt.Sprintf("%s = @%s", d.QuoteIdentifier(c), c)
@@ -87,7 +87,7 @@ func SetClauseQ(d fraggle.Dialect, cols ...string) string {
 //
 //	InsertIntoQ(d, "Users", "Name", "Email") =>
 //	  `INSERT INTO "Users" ("Name", "Email") VALUES (@Name, @Email)` (Postgres/SQLite)
-func InsertIntoQ(d fraggle.Dialect, table string, cols ...string) string {
+func InsertIntoQ(d fraggle.Identifier, table string, cols ...string) string {
 	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 		d.QuoteIdentifier(table), ColumnsQ(d, cols...), Placeholders(cols...))
 }

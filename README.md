@@ -74,7 +74,17 @@ import _ "github.com/catgoose/fraggle/driver/mssql"
 
 ## Dialect Interface
 
-Every engine implements the same interface. You get raw SQL strings that you compose into full queries — the generated SQL is predictable because it's just string concatenation with guard rails.
+The `Dialect` interface is composed from focused sub-interfaces. Each sub-interface captures a single responsibility, so functions can accept only the capability they need:
+
+| Interface | Purpose |
+|-----------|---------|
+| `TypeMapper` | Maps Go types to SQL column type strings (`IntType`, `StringType`, `BoolType`, etc.) |
+| `DDLWriter` | Generates DDL statements (`CreateTableIfNotExists`, `DropTableIfExists`, `InsertOrIgnore`, etc.) |
+| `QueryWriter` | Generates query fragments (`Placeholder`, `Pagination`, `Now`, `LastInsertIDQuery`, etc.) |
+| `Identifier` | Handles SQL identifier formatting (`NormalizeIdentifier`, `QuoteIdentifier`) |
+| `Inspector` | Provides schema introspection queries (`TableExistsQuery`, `TableColumnsQuery`) |
+
+`Dialect` composes all five, so passing a `Dialect` still works everywhere. But a function that only quotes identifiers can accept `Identifier` instead, making its dependency explicit and its tests simpler.
 
 ```go
 d, _ := fraggle.New(fraggle.Postgres)
@@ -160,6 +170,28 @@ d.ReturningClause("id, created_at")  // SQLite:   "RETURNING id, created_at"
 fraggle.QuoteColumns(d, "CreatedAt, Title DESC")
 // Postgres: "created_at", "title" DESC
 ```
+
+### Accepting Sub-Interfaces
+
+Functions that only need a subset of `Dialect` can accept a sub-interface directly. This makes dependencies explicit and simplifies testing -- you only need to implement the methods the function actually calls.
+
+```go
+// Only needs identifier quoting -- accepts Identifier, not full Dialect.
+func quotedColumnList(d fraggle.Identifier, cols []string) string {
+    quoted := make([]string, len(cols))
+    for i, c := range cols {
+        quoted[i] = d.QuoteIdentifier(c)
+    }
+    return strings.Join(quoted, ", ")
+}
+
+// Needs type mapping and identifiers -- accepts Dialect (which embeds both).
+func columnDDL(d fraggle.Dialect, name string) string {
+    return d.QuoteIdentifier(name) + " " + d.IntType()
+}
+```
+
+All three implementations (`SQLiteDialect`, `PostgresDialect`, `MSSQLDialect`) satisfy every sub-interface, verified by compile-time checks.
 
 ## Opening Connections
 

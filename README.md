@@ -3,7 +3,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/catgoose/chuck.svg)](https://pkg.go.dev/github.com/catgoose/chuck)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-![chuck](https://raw.githubusercontent.com/catgoose/screenshots/main/chuck/chuck.png)
+![chuck](https://raw.githubusercontent.com/catgoose/screenshots/main/chuck/chuck.jpg)
 
 Chuck is a multi-dialect SQL fragment system for Go. One schema definition works across SQLite, PostgreSQL, and MSSQL.
 

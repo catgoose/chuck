@@ -1,7 +1,7 @@
-// Package fraggle provides database engine abstractions for composable SQL fragments.
+// Package chuck provides database engine abstractions for multi-dialect SQL DDL.
 // It allows switching between database engines (e.g., MSSQL for production, SQLite for development)
 // while keeping SQL visible and explicit.
-package fraggle
+package chuck
 
 import (
 	"fmt"

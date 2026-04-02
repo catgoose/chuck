@@ -4,75 +4,75 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/catgoose/fraggle"
+	"github.com/catgoose/chuck"
 )
 
 // TypeFunc resolves a column type for a given dialect.
-type TypeFunc func(fraggle.Dialect) string
+type TypeFunc func(chuck.Dialect) string
 
 // TypeString returns a TypeFunc for a string column with the given max length.
 func TypeString(n int) TypeFunc {
-	return func(d fraggle.Dialect) string { return d.StringType(n) }
+	return func(d chuck.Dialect) string { return d.StringType(n) }
 }
 
 // TypeVarchar returns a TypeFunc for a varchar column with the given max length.
 func TypeVarchar(n int) TypeFunc {
-	return func(d fraggle.Dialect) string { return d.VarcharType(n) }
+	return func(d chuck.Dialect) string { return d.VarcharType(n) }
 }
 
 // TypeTimestamp returns a TypeFunc for a timestamp column.
 func TypeTimestamp() TypeFunc {
-	return func(d fraggle.Dialect) string { return d.TimestampType() }
+	return func(d chuck.Dialect) string { return d.TimestampType() }
 }
 
 // TypeAutoIncrement returns a TypeFunc for an auto-incrementing primary key column.
 func TypeAutoIncrement() TypeFunc {
-	return func(d fraggle.Dialect) string { return d.AutoIncrement() }
+	return func(d chuck.Dialect) string { return d.AutoIncrement() }
 }
 
 // TypeInt returns a TypeFunc for an integer column.
 func TypeInt() TypeFunc {
-	return func(d fraggle.Dialect) string { return d.IntType() }
+	return func(d chuck.Dialect) string { return d.IntType() }
 }
 
 // TypeBigInt returns a TypeFunc for a 64-bit integer column.
 func TypeBigInt() TypeFunc {
-	return func(d fraggle.Dialect) string { return d.BigIntType() }
+	return func(d chuck.Dialect) string { return d.BigIntType() }
 }
 
 // TypeFloat returns a TypeFunc for a floating-point column.
 func TypeFloat() TypeFunc {
-	return func(d fraggle.Dialect) string { return d.FloatType() }
+	return func(d chuck.Dialect) string { return d.FloatType() }
 }
 
 // TypeDecimal returns a TypeFunc for an exact numeric column with precision and scale.
 func TypeDecimal(precision, scale int) TypeFunc {
-	return func(d fraggle.Dialect) string { return d.DecimalType(precision, scale) }
+	return func(d chuck.Dialect) string { return d.DecimalType(precision, scale) }
 }
 
 // TypeText returns a TypeFunc for an unlimited text column.
 func TypeText() TypeFunc {
-	return func(d fraggle.Dialect) string { return d.TextType() }
+	return func(d chuck.Dialect) string { return d.TextType() }
 }
 
 // TypeBool returns a TypeFunc for a boolean column.
 func TypeBool() TypeFunc {
-	return func(d fraggle.Dialect) string { return d.BoolType() }
+	return func(d chuck.Dialect) string { return d.BoolType() }
 }
 
 // TypeUUID returns a TypeFunc for a UUID column.
 func TypeUUID() TypeFunc {
-	return func(d fraggle.Dialect) string { return d.UUIDType() }
+	return func(d chuck.Dialect) string { return d.UUIDType() }
 }
 
 // TypeJSON returns a TypeFunc for a JSON column.
 func TypeJSON() TypeFunc {
-	return func(d fraggle.Dialect) string { return d.JSONType() }
+	return func(d chuck.Dialect) string { return d.JSONType() }
 }
 
 // TypeLiteral returns a TypeFunc that always returns the given literal string.
 func TypeLiteral(s string) TypeFunc {
-	return func(_ fraggle.Dialect) string { return s }
+	return func(_ chuck.Dialect) string { return s }
 }
 
 // ColumnDef defines a single table column.
@@ -85,7 +85,7 @@ type ColumnDef struct {
 	autoIncr   bool
 	mutable    bool
 	defaultVal string
-	defaultFn  func(fraggle.Dialect) string
+	defaultFn  func(chuck.Dialect) string
 	refTable   string
 	refColumn  string
 	onDelete   string
@@ -111,8 +111,8 @@ func AutoIncrCol(name string) ColumnDef {
 // TypeUUIDPK returns a TypeFunc for a UUID primary key column.
 // This embeds PRIMARY KEY in the type definition, similar to TypeAutoIncrement.
 func TypeUUIDPK() TypeFunc {
-	return func(d fraggle.Dialect) string {
-		if d.Engine() == fraggle.Postgres {
+	return func(d chuck.Dialect) string {
+		if d.Engine() == chuck.Postgres {
 			return "UUID PRIMARY KEY DEFAULT gen_random_uuid()"
 		}
 		return d.UUIDType() + " PRIMARY KEY"
@@ -144,7 +144,7 @@ func (c ColumnDef) PrimaryKey() ColumnDef { c.pk = true; return c }
 func (c ColumnDef) Default(expr string) ColumnDef { c.defaultVal = expr; return c }
 
 // DefaultFn sets a dialect-aware DEFAULT expression (e.g. d.Now()).
-func (c ColumnDef) DefaultFn(fn func(fraggle.Dialect) string) ColumnDef { c.defaultFn = fn; return c }
+func (c ColumnDef) DefaultFn(fn func(chuck.Dialect) string) ColumnDef { c.defaultFn = fn; return c }
 
 // Immutable marks the column as immutable (excluded from UPDATE column lists).
 func (c ColumnDef) Immutable() ColumnDef { c.mutable = false; return c }
@@ -169,7 +169,7 @@ func (c ColumnDef) OnUpdate(action string) ColumnDef { c.onUpdate = action; retu
 func (c ColumnDef) Name() string { return c.name }
 
 // ddl renders one DDL column line for the given dialect.
-func (c ColumnDef) ddl(d fraggle.Dialect) string {
+func (c ColumnDef) ddl(d chuck.Dialect) string {
 	var parts []string
 
 	parts = append(parts, d.QuoteIdentifier(d.NormalizeIdentifier(c.name)))

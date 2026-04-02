@@ -89,13 +89,13 @@ jobs:
       postgres:
         image: postgres:17
         env:
-          POSTGRES_USER: fraggle
-          POSTGRES_PASSWORD: fraggle
-          POSTGRES_DB: fraggle_test
+          POSTGRES_USER: chuck
+          POSTGRES_PASSWORD: chuck
+          POSTGRES_DB: chuck_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U fraggle"
+          --health-cmd "pg_isready -U chuck"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
@@ -104,18 +104,18 @@ jobs:
         image: mcr.microsoft.com/mssql/server:2022-latest
         env:
           ACCEPT_EULA: Y
-          MSSQL_SA_PASSWORD: Fraggle#123
+          MSSQL_SA_PASSWORD: Chuck#123
         ports:
           - 1433:1433
         options: >-
-          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P 'Fraggle#123' -C -Q 'SELECT 1' || /opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P 'Fraggle#123' -Q 'SELECT 1'"
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P 'Chuck#123' -C -Q 'SELECT 1' || /opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P 'Chuck#123' -Q 'SELECT 1'"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
 
     env:
-      FRAGGLE_POSTGRES_URL: postgres://fraggle:fraggle@localhost:5432/fraggle_test?sslmode=disable
-      FRAGGLE_MSSQL_URL: sqlserver://SA:Fraggle%23123@localhost:1433?database=master
+      CHUCK_POSTGRES_URL: postgres://chuck:chuck@localhost:5432/chuck_test?sslmode=disable
+      CHUCK_MSSQL_URL: sqlserver://SA:Chuck%23123@localhost:1433?database=master
 
     steps:
       - name: Checkout

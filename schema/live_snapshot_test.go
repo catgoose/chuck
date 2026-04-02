@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/catgoose/fraggle"
+	"github.com/catgoose/chuck"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	_ "github.com/catgoose/fraggle/driver/sqlite"
+	_ "github.com/catgoose/chuck/driver/sqlite"
 )
 
 func openTestDB(t *testing.T) *sql.DB {
@@ -23,7 +23,7 @@ func openTestDB(t *testing.T) *sql.DB {
 func TestLiveSnapshot(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
-	d := fraggle.SQLiteDialect{}
+	d := chuck.SQLiteDialect{}
 
 	table := NewTable("Tasks").
 		Columns(
@@ -78,7 +78,7 @@ func TestLiveSnapshot(t *testing.T) {
 func TestLiveSnapshotTableNotExists(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
-	d := fraggle.SQLiteDialect{}
+	d := chuck.SQLiteDialect{}
 
 	_, err := LiveSnapshot(ctx, db, d, "nonexistent")
 	require.Error(t, err)
@@ -88,7 +88,7 @@ func TestLiveSnapshotTableNotExists(t *testing.T) {
 func TestLiveSnapshotString(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
-	d := fraggle.SQLiteDialect{}
+	d := chuck.SQLiteDialect{}
 
 	table := NewTable("Users").
 		Columns(
@@ -114,7 +114,7 @@ func TestLiveSnapshotString(t *testing.T) {
 func TestLiveSchemaSnapshot(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
-	d := fraggle.SQLiteDialect{}
+	d := chuck.SQLiteDialect{}
 
 	users := NewTable("Users").
 		Columns(AutoIncrCol("ID"), Col("Name", TypeString(255)))
@@ -138,7 +138,7 @@ func TestLiveSchemaSnapshot(t *testing.T) {
 func TestLiveSnapshotStringWithIndex(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
-	d := fraggle.SQLiteDialect{}
+	d := chuck.SQLiteDialect{}
 
 	table := NewTable("Products").
 		Columns(
@@ -186,7 +186,7 @@ func TestQueryColumnsUnsupportedEngine(t *testing.T) {
 	// Instead, verify that a valid SQLite in-memory DB returns columns correctly.
 	ctx := context.Background()
 	db := openTestDB(t)
-	d := fraggle.SQLiteDialect{}
+	d := chuck.SQLiteDialect{}
 
 	table := NewTable("Widgets").
 		Columns(
@@ -220,7 +220,7 @@ func TestQueryColumnsUnsupportedEngine(t *testing.T) {
 func TestQueryIndexesMultiple(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
-	d := fraggle.SQLiteDialect{}
+	d := chuck.SQLiteDialect{}
 
 	table := NewTable("Orders").
 		Columns(
@@ -250,7 +250,7 @@ func TestQueryIndexesMultiple(t *testing.T) {
 func TestLiveSnapshotCompareWithDeclared(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
-	d := fraggle.SQLiteDialect{}
+	d := chuck.SQLiteDialect{}
 
 	table := NewTable("Items").
 		Columns(

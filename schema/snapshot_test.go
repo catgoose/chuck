@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/catgoose/fraggle"
+	"github.com/catgoose/chuck"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,7 +24,7 @@ func TestSnapshot(t *testing.T) {
 		)
 
 	t.Run("struct_fields", func(t *testing.T) {
-		snap := table.Snapshot(fraggle.PostgresDialect{})
+		snap := table.Snapshot(chuck.PostgresDialect{})
 
 		assert.Equal(t, "tasks", snap.Name)
 		assert.True(t, snap.HasSoftDelete)
@@ -53,7 +53,7 @@ func TestSnapshot(t *testing.T) {
 	})
 
 	t.Run("json_serializable", func(t *testing.T) {
-		snap := table.Snapshot(fraggle.SQLiteDialect{})
+		snap := table.Snapshot(chuck.SQLiteDialect{})
 		data, err := json.MarshalIndent(snap, "", "  ")
 		require.NoError(t, err)
 		assert.Contains(t, string(data), `"name": "Tasks"`)
@@ -61,8 +61,8 @@ func TestSnapshot(t *testing.T) {
 	})
 
 	t.Run("dialect_aware_types", func(t *testing.T) {
-		pgSnap := table.Snapshot(fraggle.PostgresDialect{})
-		msSnap := table.Snapshot(fraggle.MSSQLDialect{})
+		pgSnap := table.Snapshot(chuck.PostgresDialect{})
+		msSnap := table.Snapshot(chuck.MSSQLDialect{})
 
 		// Title column type differs per dialect
 		assert.Equal(t, "TEXT", pgSnap.Columns[1].Type)
@@ -86,7 +86,7 @@ func TestSnapshotString(t *testing.T) {
 			Index("idx_users_email", "Email"),
 		)
 
-	s := table.SnapshotString(fraggle.PostgresDialect{})
+	s := table.SnapshotString(chuck.PostgresDialect{})
 
 	assert.Contains(t, s, "TABLE users")
 	assert.Contains(t, s, "id")
@@ -105,14 +105,14 @@ func TestSnapshotStringMultiTable(t *testing.T) {
 	tasks := NewTable("Tasks").
 		Columns(AutoIncrCol("ID"), Col("Title", TypeString(255)).NotNull())
 
-	s := SchemaSnapshotString(fraggle.SQLiteDialect{}, users, tasks)
+	s := SchemaSnapshotString(chuck.SQLiteDialect{}, users, tasks)
 	assert.Contains(t, s, "TABLE Users")
 	assert.Contains(t, s, "TABLE Tasks")
 }
 
 func TestSnapshotUniqueConstraints(t *testing.T) {
 	table := NewMappingTable("UserRoles", "UserID", "RoleID")
-	snap := table.Snapshot(fraggle.PostgresDialect{})
+	snap := table.Snapshot(chuck.PostgresDialect{})
 
 	require.Len(t, snap.UniqueConstraints, 1)
 	assert.Equal(t, []string{"user_id", "role_id"}, snap.UniqueConstraints[0])
@@ -126,7 +126,7 @@ func TestSnapshotOnDeleteOnUpdate(t *testing.T) {
 			Col("ReqID", TypeInt()).NotNull().References("Requirements", "ID").OnDelete("SET NULL").OnUpdate("CASCADE"),
 		)
 
-	snap := table.Snapshot(fraggle.PostgresDialect{})
+	snap := table.Snapshot(chuck.PostgresDialect{})
 	require.Len(t, snap.Columns, 3)
 
 	taskID := snap.Columns[1]
@@ -146,7 +146,7 @@ func TestSchemaSnapshot(t *testing.T) {
 	tasks := NewTable("Tasks").
 		Columns(AutoIncrCol("ID"))
 
-	snaps := SchemaSnapshot(fraggle.PostgresDialect{}, users, tasks)
+	snaps := SchemaSnapshot(chuck.PostgresDialect{}, users, tasks)
 	require.Len(t, snaps, 2)
 	assert.Equal(t, "users", snaps[0].Name)
 	assert.Equal(t, "tasks", snaps[1].Name)

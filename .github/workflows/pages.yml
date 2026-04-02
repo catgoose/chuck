@@ -41,7 +41,7 @@ jobs:
           <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>Fraggle — Multi-Dialect SQL Fragments for Go</title>
+            <title>Chuck — Multi-Dialect SQL Fragments for Go</title>
             <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown-light.min.css">
             <style>
               body {
@@ -59,8 +59,8 @@ jobs:
           <nav>
             <a href="./">Home</a>
             <a href="./api/">API Reference</a>
-            <a href="https://pkg.go.dev/github.com/catgoose/fraggle">pkg.go.dev</a>
-            <a href="https://github.com/catgoose/fraggle">GitHub</a>
+            <a href="https://pkg.go.dev/github.com/catgoose/chuck">pkg.go.dev</a>
+            <a href="https://github.com/catgoose/chuck">GitHub</a>
           </nav>
           <article class="markdown-body">
           HEADER
@@ -79,12 +79,12 @@ jobs:
           nav_header='<nav style="margin-bottom:2rem;padding:1rem 0;border-bottom:1px solid #d0d7de">
             <a href="../" style="margin-right:1.5rem;text-decoration:none;font-weight:600">Home</a>
             <a href="./" style="margin-right:1.5rem;text-decoration:none;font-weight:600">API Reference</a>
-            <a href="https://pkg.go.dev/github.com/catgoose/fraggle" style="margin-right:1.5rem;text-decoration:none;font-weight:600">pkg.go.dev</a>
-            <a href="https://github.com/catgoose/fraggle" style="text-decoration:none;font-weight:600">GitHub</a>
+            <a href="https://pkg.go.dev/github.com/catgoose/chuck" style="margin-right:1.5rem;text-decoration:none;font-weight:600">pkg.go.dev</a>
+            <a href="https://github.com/catgoose/chuck" style="text-decoration:none;font-weight:600">GitHub</a>
           </nav>'
 
           # Generate markdown for each package
-          gomarkdoc --output _site/api/fraggle.md ./...
+          gomarkdoc --output _site/api/chuck.md ./...
           gomarkdoc --output _site/api/schema.md ./schema/...
           gomarkdoc --output _site/api/dbrepo.md ./dbrepo/...
 
@@ -95,7 +95,7 @@ jobs:
           <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>Fraggle API Reference</title>
+            <title>Chuck API Reference</title>
             <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown-light.min.css">
             <style>
               body { max-width: 900px; margin: 0 auto; padding: 2rem 1rem; }
@@ -108,9 +108,9 @@ jobs:
           <h1>API Reference</h1>
           <h2>Packages</h2>
           <ul>
-            <li><a href="fraggle.html"><code>fraggle</code></a> — Core dialect interface and engine abstraction</li>
-            <li><a href="schema.html"><code>fraggle/schema</code></a> — Declarative table definitions with traits</li>
-            <li><a href="dbrepo.html"><code>fraggle/dbrepo</code></a> — Query builders and mutation helpers</li>
+            <li><a href="chuck.html"><code>chuck</code></a> — Core dialect interface and engine abstraction</li>
+            <li><a href="schema.html"><code>chuck/schema</code></a> — Declarative table definitions with traits</li>
+            <li><a href="dbrepo.html"><code>chuck/dbrepo</code></a> — Query builders and mutation helpers</li>
           </ul>
           </article>
           </body>
@@ -118,14 +118,14 @@ jobs:
           EOF
 
           # Convert each API doc from markdown to HTML page
-          for pkg in fraggle schema dbrepo; do
+          for pkg in chuck schema dbrepo; do
             cat > "_site/api/${pkg}.html" <<PKGHEAD
           <!DOCTYPE html>
           <html lang="en">
           <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>fraggle/${pkg} — API Reference</title>
+            <title>chuck/${pkg} — API Reference</title>
             <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown-light.min.css">
             <style>
               body { max-width: 900px; margin: 0 auto; padding: 2rem 1rem; }

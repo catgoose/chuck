@@ -1,4 +1,4 @@
-package fraggle
+package chuck
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	_ "github.com/catgoose/fraggle/driver/sqlite"
+	_ "github.com/catgoose/chuck/driver/sqlite"
 )
 
 func TestOpenURLUnsupportedScheme(t *testing.T) {
@@ -156,7 +156,7 @@ func TestOpenSQLiteInvalidPath(t *testing.T) {
 	// Instead, verify OpenSQLite fails gracefully when MkdirAll fails.
 	// On Linux, writing to /proc/invalid is not possible.
 	ctx := context.Background()
-	_, _, err := OpenSQLite(ctx, "/proc/fraggle_test_invalid_dir/test.db")
+	_, _, err := OpenSQLite(ctx, "/proc/chuck_test_invalid_dir/test.db")
 	require.Error(t, err)
 }
 

@@ -2,7 +2,7 @@
 //
 // Functions in this package use @Name placeholders (e.g., @ID, @Name) which rely on
 // database/sql's sql.Named() for driver-level parameter translation. This is distinct
-// from the fraggle.Dialect.Placeholder() method which returns engine-specific positional
+// from the chuck.Dialect.Placeholder() method which returns engine-specific positional
 // syntax ($1, ?, @p1) for raw SQL composition.
 //
 // The @Name convention works because database/sql drivers translate sql.NamedArg values
@@ -11,7 +11,7 @@
 // sql.Named() arguments.
 //
 // For identifier quoting, use the Q-suffixed variants (ColumnsQ, SetClauseQ, InsertIntoQ)
-// which accept a fraggle.Dialect and quote table/column names via QuoteIdentifier.
+// which accept a chuck.Dialect and quote table/column names via QuoteIdentifier.
 package dbrepo
 
 import (
@@ -20,7 +20,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/catgoose/fraggle"
+	"github.com/catgoose/chuck"
 )
 
 // Columns joins column names into a comma-separated list.
@@ -64,7 +64,7 @@ func InsertInto(table string, cols ...string) string {
 // ColumnsQ joins column names into a comma-separated list with dialect quoting.
 //
 //	ColumnsQ(d, "ID", "Name", "Email") => `"ID", "Name", "Email"` (Postgres/SQLite)
-func ColumnsQ(d fraggle.Identifier, cols ...string) string {
+func ColumnsQ(d chuck.Identifier, cols ...string) string {
 	quoted := make([]string, len(cols))
 	for i, c := range cols {
 		quoted[i] = d.QuoteIdentifier(c)
@@ -75,7 +75,7 @@ func ColumnsQ(d fraggle.Identifier, cols ...string) string {
 // SetClauseQ builds a SET fragment for UPDATE statements with dialect quoting.
 //
 //	SetClauseQ(d, "Name", "Email") => `"Name" = @Name, "Email" = @Email` (Postgres/SQLite)
-func SetClauseQ(d fraggle.Identifier, cols ...string) string {
+func SetClauseQ(d chuck.Identifier, cols ...string) string {
 	parts := make([]string, len(cols))
 	for i, c := range cols {
 		parts[i] = fmt.Sprintf("%s = @%s", d.QuoteIdentifier(c), c)
@@ -87,7 +87,7 @@ func SetClauseQ(d fraggle.Identifier, cols ...string) string {
 //
 //	InsertIntoQ(d, "Users", "Name", "Email") =>
 //	  `INSERT INTO "Users" ("Name", "Email") VALUES (@Name, @Email)` (Postgres/SQLite)
-func InsertIntoQ(d fraggle.Identifier, table string, cols ...string) string {
+func InsertIntoQ(d chuck.Identifier, table string, cols ...string) string {
 	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 		d.QuoteIdentifier(table), ColumnsQ(d, cols...), Placeholders(cols...))
 }

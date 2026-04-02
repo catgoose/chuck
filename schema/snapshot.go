@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/catgoose/fraggle"
+	"github.com/catgoose/chuck"
 )
 
 // ColumnSnapshot describes a single column's resolved schema for a given dialect.
@@ -44,7 +44,7 @@ type TableSnapshot struct {
 // Snapshot returns a structured, dialect-resolved representation of the table schema.
 // The output is useful for diffing against a live database or serializing to JSON
 // for CI validation.
-func (t *TableDef) Snapshot(d fraggle.Dialect) TableSnapshot {
+func (t *TableDef) Snapshot(d chuck.Dialect) TableSnapshot {
 	snap := TableSnapshot{
 		Name:          d.NormalizeIdentifier(t.Name),
 		HasSoftDelete: t.hasSoftDelete,
@@ -98,7 +98,7 @@ func (t *TableDef) Snapshot(d fraggle.Dialect) TableSnapshot {
 // SnapshotString returns a human-readable, diff-friendly text representation
 // of the table schema resolved for the given dialect. The format is designed
 // for side-by-side comparison with a live database schema.
-func (t *TableDef) SnapshotString(d fraggle.Dialect) string {
+func (t *TableDef) SnapshotString(d chuck.Dialect) string {
 	snap := t.Snapshot(d)
 	var b strings.Builder
 
@@ -151,7 +151,7 @@ func (t *TableDef) SnapshotString(d fraggle.Dialect) string {
 
 // SchemaSnapshot returns snapshots for multiple tables, useful for
 // dumping the entire declared schema for comparison or CI validation.
-func SchemaSnapshot(d fraggle.Dialect, tables ...*TableDef) []TableSnapshot {
+func SchemaSnapshot(d chuck.Dialect, tables ...*TableDef) []TableSnapshot {
 	snaps := make([]TableSnapshot, len(tables))
 	for i, t := range tables {
 		snaps[i] = t.Snapshot(d)
@@ -160,7 +160,7 @@ func SchemaSnapshot(d fraggle.Dialect, tables ...*TableDef) []TableSnapshot {
 }
 
 // SchemaSnapshotString returns a human-readable snapshot of multiple tables.
-func SchemaSnapshotString(d fraggle.Dialect, tables ...*TableDef) string {
+func SchemaSnapshotString(d chuck.Dialect, tables ...*TableDef) string {
 	var b strings.Builder
 	for i, t := range tables {
 		if i > 0 {

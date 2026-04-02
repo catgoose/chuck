@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/catgoose/fraggle"
+	"github.com/catgoose/chuck"
 )
 
 // UniqueConstraint defines a composite UNIQUE constraint across multiple columns.
@@ -17,7 +17,7 @@ type UniqueConstraint struct {
 }
 
 // ddl renders the constraint as a DDL fragment.
-func (uc UniqueConstraint) ddl(d fraggle.Dialect) string {
+func (uc UniqueConstraint) ddl(d chuck.Dialect) string {
 	quoted := make([]string, len(uc.columns))
 	for i, col := range uc.columns {
 		quoted[i] = d.QuoteIdentifier(d.NormalizeIdentifier(col))
@@ -47,7 +47,7 @@ func NewTable(name string) *TableDef {
 }
 
 // TableNameFor returns the table name normalized for the given dialect.
-func (t *TableDef) TableNameFor(d fraggle.Dialect) string {
+func (t *TableDef) TableNameFor(d chuck.Dialect) string {
 	return d.NormalizeIdentifier(t.Name)
 }
 
@@ -165,7 +165,7 @@ func (t *TableDef) HasSeedData() bool {
 // SeedSQL returns idempotent INSERT statements for all seed rows using the
 // dialect's InsertOrIgnore method.
 // Only columns present in the SeedRow are included — missing columns use their DB defaults.
-func (t *TableDef) SeedSQL(d fraggle.Dialect) []string {
+func (t *TableDef) SeedSQL(d chuck.Dialect) []string {
 	if len(t.seedRows) == 0 {
 		return nil
 	}
@@ -203,7 +203,7 @@ func (t *TableDef) SelectColumns() []string {
 }
 
 // SelectColumnsFor returns all column names normalized for the given dialect.
-func (t *TableDef) SelectColumnsFor(d fraggle.Dialect) []string {
+func (t *TableDef) SelectColumnsFor(d chuck.Dialect) []string {
 	names := make([]string, len(t.cols))
 	for i, c := range t.cols {
 		names[i] = d.NormalizeIdentifier(c.name)
@@ -224,7 +224,7 @@ func (t *TableDef) InsertColumns() []string {
 
 // InsertColumnsFor returns column names excluding auto-increment columns,
 // normalized for the given dialect.
-func (t *TableDef) InsertColumnsFor(d fraggle.Dialect) []string {
+func (t *TableDef) InsertColumnsFor(d chuck.Dialect) []string {
 	var names []string
 	for _, c := range t.cols {
 		if !c.autoIncr {
@@ -246,7 +246,7 @@ func (t *TableDef) UpdateColumns() []string {
 }
 
 // UpdateColumnsFor returns only mutable column names, normalized for the given dialect.
-func (t *TableDef) UpdateColumnsFor(d fraggle.Dialect) []string {
+func (t *TableDef) UpdateColumnsFor(d chuck.Dialect) []string {
 	var names []string
 	for _, c := range t.cols {
 		if c.mutable {
@@ -277,7 +277,7 @@ func (t *TableDef) HasArchive() bool {
 }
 
 // columnBody returns the formatted column definitions for use in CREATE TABLE statements.
-func (t *TableDef) columnBody(d fraggle.Dialect) string {
+func (t *TableDef) columnBody(d chuck.Dialect) string {
 	var colLines []string
 	for _, c := range t.cols {
 		colLines = append(colLines, "\t\t\t"+c.ddl(d))
@@ -289,7 +289,7 @@ func (t *TableDef) columnBody(d fraggle.Dialect) string {
 }
 
 // CreateSQL returns the CREATE TABLE statement followed by CREATE INDEX statements.
-func (t *TableDef) CreateSQL(d fraggle.Dialect) []string {
+func (t *TableDef) CreateSQL(d chuck.Dialect) []string {
 	tableName := d.NormalizeIdentifier(t.Name)
 	create := fmt.Sprintf("\n\t\tCREATE TABLE %s (\n%s\n\t\t)",
 		d.QuoteIdentifier(tableName), t.columnBody(d))
@@ -302,7 +302,7 @@ func (t *TableDef) CreateSQL(d fraggle.Dialect) []string {
 }
 
 // CreateIfNotExistsSQL returns CREATE TABLE IF NOT EXISTS followed by CREATE INDEX IF NOT EXISTS statements.
-func (t *TableDef) CreateIfNotExistsSQL(d fraggle.Dialect) []string {
+func (t *TableDef) CreateIfNotExistsSQL(d chuck.Dialect) []string {
 	tableName := d.NormalizeIdentifier(t.Name)
 	create := d.CreateTableIfNotExists(tableName, t.columnBody(d))
 
@@ -314,6 +314,6 @@ func (t *TableDef) CreateIfNotExistsSQL(d fraggle.Dialect) []string {
 }
 
 // DropSQL returns the DROP TABLE statement for the given dialect.
-func (t *TableDef) DropSQL(d fraggle.Dialect) string {
+func (t *TableDef) DropSQL(d chuck.Dialect) string {
 	return d.DropTableIfExists(d.NormalizeIdentifier(t.Name))
 }

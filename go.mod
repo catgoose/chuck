@@ -1,4 +1,4 @@
-module github.com/catgoose/fraggle
+module github.com/catgoose/chuck
 
 go 1.26.1
 

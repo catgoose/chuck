@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/catgoose/fraggle"
-	"github.com/catgoose/fraggle/schema"
+	"github.com/catgoose/chuck"
+	"github.com/catgoose/chuck/schema"
 )
 
 func ExampleNewTable() {
@@ -21,7 +21,7 @@ func ExampleNewTable() {
 		)
 
 	// Snapshot shows the resolved schema for any dialect
-	d, _ := fraggle.New(fraggle.SQLite)
+	d, _ := chuck.New(chuck.SQLite)
 	fmt.Print(tasks.SnapshotString(d))
 	// Output:
 	// TABLE Tasks
@@ -51,7 +51,7 @@ func ExampleNewTable_traits() {
 	fmt.Println("HasVersion:", projects.HasVersion())
 
 	// Postgres normalizes column names to snake_case
-	pg, _ := fraggle.New(fraggle.Postgres)
+	pg, _ := chuck.New(chuck.Postgres)
 	fmt.Println("Postgres select:", strings.Join(projects.SelectColumnsFor(pg), ", "))
 	// Output:
 	// Select: ID, Name, Status, Version, DeletedAt, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, DeletedBy
@@ -62,7 +62,7 @@ func ExampleNewTable_traits() {
 }
 
 func ExampleNewTable_foreignKeys() {
-	pg, _ := fraggle.New(fraggle.Postgres)
+	pg, _ := chuck.New(chuck.Postgres)
 
 	comments := schema.NewTable("Comments").
 		Columns(
@@ -84,7 +84,7 @@ func ExampleNewTable_foreignKeys() {
 }
 
 func ExampleNewTable_uuidPrimaryKey() {
-	pg, _ := fraggle.New(fraggle.Postgres)
+	pg, _ := chuck.New(chuck.Postgres)
 
 	tokens := schema.NewTable("Tokens").
 		Columns(
@@ -106,7 +106,7 @@ func ExampleNewTable_uuidPrimaryKey() {
 
 func ExampleNewTable_allTraits() {
 	// Compose every trait on a single table to show the full column set
-	d, _ := fraggle.New(fraggle.SQLite)
+	d, _ := chuck.New(chuck.SQLite)
 
 	table := schema.NewTable("FullDemo").
 		Columns(
@@ -152,7 +152,7 @@ func ExampleNewTable_allTraits() {
 }
 
 func ExampleNewLookupTable() {
-	d, _ := fraggle.New(fraggle.SQLite)
+	d, _ := chuck.New(chuck.SQLite)
 
 	options := schema.NewLookupTable("Options", "Category", "Label")
 
@@ -169,7 +169,7 @@ func ExampleNewLookupTable() {
 }
 
 func ExampleNewMappingTable() {
-	d, _ := fraggle.New(fraggle.SQLite)
+	d, _ := chuck.New(chuck.SQLite)
 
 	userRoles := schema.NewMappingTable("UserRoles", "UserID", "RoleID")
 
@@ -188,7 +188,7 @@ func ExampleNewMappingTable() {
 }
 
 func ExampleNewConfigTable() {
-	d, _ := fraggle.New(fraggle.SQLite)
+	d, _ := chuck.New(chuck.SQLite)
 
 	settings := schema.NewConfigTable("Settings", "Key", "Value")
 
@@ -204,7 +204,7 @@ func ExampleNewConfigTable() {
 }
 
 func ExampleNewEventTable() {
-	d, _ := fraggle.New(fraggle.SQLite)
+	d, _ := chuck.New(chuck.SQLite)
 
 	auditLog := schema.NewEventTable("AuditLog",
 		schema.Col("EventType", schema.TypeVarchar(50)).NotNull(),
@@ -229,7 +229,7 @@ func ExampleNewEventTable() {
 }
 
 func ExampleNewQueueTable() {
-	d, _ := fraggle.New(fraggle.SQLite)
+	d, _ := chuck.New(chuck.SQLite)
 
 	jobs := schema.NewQueueTable("Jobs", "Payload")
 
@@ -251,7 +251,7 @@ func ExampleNewQueueTable() {
 }
 
 func ExampleNewLookupJoinTable() {
-	d, _ := fraggle.New(fraggle.SQLite)
+	d, _ := chuck.New(chuck.SQLite)
 
 	taskOptions := schema.NewLookupJoinTable("TaskOptions")
 
@@ -267,7 +267,7 @@ func ExampleNewLookupJoinTable() {
 }
 
 func ExampleTableDef_WithSeedRows() {
-	d, _ := fraggle.New(fraggle.SQLite)
+	d, _ := chuck.New(chuck.SQLite)
 
 	statuses := schema.NewTable("Statuses").
 		Columns(
@@ -294,7 +294,7 @@ func ExampleTableDef_WithSeedRows() {
 }
 
 func ExampleTableDef_WithSeedRows_postgres() {
-	d, _ := fraggle.New(fraggle.Postgres)
+	d, _ := chuck.New(chuck.Postgres)
 
 	roles := schema.NewTable("Roles").
 		Columns(
@@ -316,7 +316,7 @@ func ExampleTableDef_WithSeedRows_postgres() {
 }
 
 func ExampleTableDef_Snapshot() {
-	d, _ := fraggle.New(fraggle.Postgres)
+	d, _ := chuck.New(chuck.Postgres)
 
 	tasks := schema.NewTable("Tasks").
 		Columns(
@@ -337,7 +337,7 @@ func ExampleTableDef_Snapshot() {
 }
 
 func ExampleTableDef_columnLists() {
-	d, _ := fraggle.New(fraggle.Postgres)
+	d, _ := chuck.New(chuck.Postgres)
 
 	tasks := schema.NewTable("Tasks").
 		Columns(
@@ -357,7 +357,7 @@ func ExampleTableDef_columnLists() {
 }
 
 func ExampleSchemaSnapshotString() {
-	d, _ := fraggle.New(fraggle.SQLite)
+	d, _ := chuck.New(chuck.SQLite)
 
 	users := schema.NewTable("Users").
 		Columns(

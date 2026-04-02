@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/catgoose/fraggle"
+	"github.com/catgoose/chuck"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -58,8 +58,8 @@ func TestColumnsFor(t *testing.T) {
 		).
 		WithTimestamps()
 
-	pg := fraggle.PostgresDialect{}
-	sq := fraggle.SQLiteDialect{}
+	pg := chuck.PostgresDialect{}
+	sq := chuck.SQLiteDialect{}
 
 	t.Run("SelectColumnsFor_postgres", func(t *testing.T) {
 		cols := table.SelectColumnsFor(pg)
@@ -144,10 +144,10 @@ func TestCreateIfNotExistsSQL(t *testing.T) {
 			Index("idx_users_name", "Name"),
 		)
 
-	dialects := []fraggle.Dialect{
-		fraggle.PostgresDialect{},
-		fraggle.SQLiteDialect{},
-		fraggle.MSSQLDialect{},
+	dialects := []chuck.Dialect{
+		chuck.PostgresDialect{},
+		chuck.SQLiteDialect{},
+		chuck.MSSQLDialect{},
 	}
 
 	for _, d := range dialects {
@@ -156,7 +156,7 @@ func TestCreateIfNotExistsSQL(t *testing.T) {
 			require.GreaterOrEqual(t, len(stmts), 2) // CREATE TABLE + CREATE INDEX
 
 			// CREATE TABLE statement — Postgres normalizes to snake_case
-			if d.Engine() == fraggle.Postgres {
+			if d.Engine() == chuck.Postgres {
 				assert.Contains(t, stmts[0], "users")
 				assert.Contains(t, stmts[0], "name")
 			} else {
@@ -172,7 +172,7 @@ func TestCreateIfNotExistsSQL(t *testing.T) {
 
 func TestDropSQL(t *testing.T) {
 	table := NewTable("Users")
-	d := fraggle.SQLiteDialect{}
+	d := chuck.SQLiteDialect{}
 	assert.Contains(t, table.DropSQL(d), "DROP TABLE")
 	assert.Contains(t, table.DropSQL(d), "Users")
 }
@@ -185,7 +185,7 @@ func TestUniqueColumns(t *testing.T) {
 		).
 		UniqueColumns("LeftID", "RightID")
 
-	d := fraggle.SQLiteDialect{}
+	d := chuck.SQLiteDialect{}
 	stmts := table.CreateIfNotExistsSQL(d)
 	assert.Contains(t, stmts[0], `UNIQUE ("LeftID", "RightID")`)
 }
@@ -206,14 +206,14 @@ func TestSeedData(t *testing.T) {
 	assert.Len(t, table.SeedRows(), 2)
 
 	t.Run("sqlite", func(t *testing.T) {
-		stmts := table.SeedSQL(fraggle.SQLiteDialect{})
+		stmts := table.SeedSQL(chuck.SQLiteDialect{})
 		require.Len(t, stmts, 2)
 		assert.Contains(t, stmts[0], `INSERT OR IGNORE INTO "Statuses"`)
 		assert.Contains(t, stmts[0], "'active'")
 	})
 
 	t.Run("postgres", func(t *testing.T) {
-		stmts := table.SeedSQL(fraggle.PostgresDialect{})
+		stmts := table.SeedSQL(chuck.PostgresDialect{})
 		require.Len(t, stmts, 2)
 		assert.Contains(t, stmts[0], `INSERT INTO "statuses"`)
 		assert.Contains(t, stmts[0], "ON CONFLICT DO NOTHING")
@@ -221,7 +221,7 @@ func TestSeedData(t *testing.T) {
 	})
 
 	t.Run("mssql", func(t *testing.T) {
-		stmts := table.SeedSQL(fraggle.MSSQLDialect{})
+		stmts := table.SeedSQL(chuck.MSSQLDialect{})
 		require.Len(t, stmts, 2)
 		assert.Contains(t, stmts[0], "INSERT INTO [Statuses]")
 		assert.Contains(t, stmts[0], "BEGIN TRY")
@@ -230,7 +230,7 @@ func TestSeedData(t *testing.T) {
 }
 
 func TestColumnDDL(t *testing.T) {
-	d := fraggle.PostgresDialect{}
+	d := chuck.PostgresDialect{}
 
 	t.Run("basic", func(t *testing.T) {
 		c := Col("Name", TypeVarchar(255))
@@ -252,7 +252,7 @@ func TestColumnDDL(t *testing.T) {
 	})
 
 	t.Run("default_fn", func(t *testing.T) {
-		c := Col("CreatedAt", TypeTimestamp()).DefaultFn(func(d fraggle.Dialect) string { return d.Now() })
+		c := Col("CreatedAt", TypeTimestamp()).DefaultFn(func(d chuck.Dialect) string { return d.Now() })
 		ddl := c.ddl(d)
 		assert.Contains(t, ddl, "DEFAULT NOW()")
 	})
@@ -296,7 +296,7 @@ func TestColumnDDL(t *testing.T) {
 
 	t.Run("uuid_pk_sqlite", func(t *testing.T) {
 		c := UUIDPKCol("ID")
-		sq := fraggle.SQLiteDialect{}
+		sq := chuck.SQLiteDialect{}
 		ddl := c.ddl(sq)
 		assert.Contains(t, ddl, "TEXT PRIMARY KEY")
 		assert.NotContains(t, ddl, "gen_random_uuid")
@@ -304,7 +304,7 @@ func TestColumnDDL(t *testing.T) {
 
 	t.Run("uuid_pk_mssql", func(t *testing.T) {
 		c := UUIDPKCol("ID")
-		ms := fraggle.MSSQLDialect{}
+		ms := chuck.MSSQLDialect{}
 		ddl := c.ddl(ms)
 		assert.Contains(t, ddl, "UNIQUEIDENTIFIER PRIMARY KEY")
 		assert.NotContains(t, ddl, "gen_random_uuid")
@@ -318,21 +318,21 @@ func TestColumnDDL(t *testing.T) {
 
 	t.Run("references_on_delete_sqlite", func(t *testing.T) {
 		c := Col("TaskID", TypeInt()).NotNull().References("Tasks", "ID").OnDelete("CASCADE")
-		sq := fraggle.SQLiteDialect{}
+		sq := chuck.SQLiteDialect{}
 		ddl := c.ddl(sq)
 		assert.Contains(t, ddl, `REFERENCES "Tasks"("ID") ON DELETE CASCADE`)
 	})
 
 	t.Run("references_on_delete_mssql", func(t *testing.T) {
 		c := Col("TaskID", TypeInt()).NotNull().References("Tasks", "ID").OnDelete("CASCADE").OnUpdate("SET NULL")
-		ms := fraggle.MSSQLDialect{}
+		ms := chuck.MSSQLDialect{}
 		ddl := c.ddl(ms)
 		assert.Contains(t, ddl, `REFERENCES [Tasks]([ID]) ON DELETE CASCADE ON UPDATE SET NULL`)
 	})
 }
 
 func TestTableFactories(t *testing.T) {
-	d := fraggle.SQLiteDialect{}
+	d := chuck.SQLiteDialect{}
 
 	t.Run("MappingTable", func(t *testing.T) {
 		table := NewMappingTable("UserRoles", "UserID", "RoleID")
@@ -450,7 +450,7 @@ func TestCreateSQL(t *testing.T) {
 				AutoIncrCol("ID"),
 				Col("Body", TypeText()).NotNull(),
 			)
-		d := fraggle.SQLiteDialect{}
+		d := chuck.SQLiteDialect{}
 		stmts := table.CreateSQL(d)
 		require.Len(t, stmts, 1) // no indexes
 		assert.Contains(t, stmts[0], "CREATE TABLE")
@@ -469,7 +469,7 @@ func TestCreateSQL(t *testing.T) {
 			Indexes(
 				Index("idx_articles_title", "Title"),
 			)
-		d := fraggle.SQLiteDialect{}
+		d := chuck.SQLiteDialect{}
 		stmts := table.CreateSQL(d)
 		require.Len(t, stmts, 2)
 		assert.Contains(t, stmts[0], "CREATE TABLE")
@@ -482,7 +482,7 @@ func TestCreateSQL(t *testing.T) {
 				AutoIncrCol("ID"),
 				Col("MyColumn", TypeInt()).NotNull(),
 			)
-		d := fraggle.PostgresDialect{}
+		d := chuck.PostgresDialect{}
 		stmts := table.CreateSQL(d)
 		require.Len(t, stmts, 1)
 		assert.Contains(t, stmts[0], "my_table")
@@ -495,7 +495,7 @@ func TestCreateSQL(t *testing.T) {
 				AutoIncrCol("ID"),
 				Col("Content", TypeText()),
 			)
-		d := fraggle.MSSQLDialect{}
+		d := chuck.MSSQLDialect{}
 		stmts := table.CreateSQL(d)
 		require.Len(t, stmts, 1)
 		assert.Contains(t, stmts[0], "CREATE TABLE")
@@ -504,7 +504,7 @@ func TestCreateSQL(t *testing.T) {
 }
 
 func TestTypeFuncs(t *testing.T) {
-	d := fraggle.PostgresDialect{}
+	d := chuck.PostgresDialect{}
 
 	assert.Equal(t, "TEXT", TypeString(255)(d))
 	assert.Equal(t, "VARCHAR(255)", TypeVarchar(255)(d))

@@ -1,11 +1,11 @@
-# fraggle
+# chuck
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/catgoose/fraggle.svg)](https://pkg.go.dev/github.com/catgoose/fraggle)
+[![Go Reference](https://pkg.go.dev/badge/github.com/catgoose/chuck.svg)](https://pkg.go.dev/github.com/catgoose/chuck)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-![fraggle](https://raw.githubusercontent.com/catgoose/screenshots/main/fraggle/fraggle.png)
+![chuck](https://raw.githubusercontent.com/catgoose/screenshots/main/chuck/chuck.png)
 
-Fraggle is a multi-dialect SQL fragment system for Go. One schema definition works across SQLite, PostgreSQL, and MSSQL.
+Chuck is a multi-dialect SQL fragment system for Go. One schema definition works across SQLite, PostgreSQL, and MSSQL.
 
 No ORM, no query builder magic — just explicit SQL fragments, composable schema definitions, and domain patterns as primitives.
 
@@ -15,7 +15,7 @@ No ORM, no query builder magic — just explicit SQL fragments, composable schem
 >
 > -- Layman Grug
 
-**Without fraggle:**
+**Without chuck:**
 
 ```go
 // One table. Three dialects. Three separate DDL strings.
@@ -39,7 +39,7 @@ const createTasksPostgres = `CREATE TABLE IF NOT EXISTS "tasks" (
 // Add a column? Update six places.
 ```
 
-**With fraggle:**
+**With chuck:**
 
 ```go
 var TasksTable = schema.NewTable("Tasks").
@@ -61,15 +61,15 @@ for _, stmt := range TasksTable.CreateIfNotExistsSQL(dialect) {
 ## Install
 
 ```bash
-go get github.com/catgoose/fraggle
+go get github.com/catgoose/chuck
 ```
 
 Import only the database drivers you need:
 
 ```go
-import _ "github.com/catgoose/fraggle/driver/sqlite"
-import _ "github.com/catgoose/fraggle/driver/postgres"
-import _ "github.com/catgoose/fraggle/driver/mssql"
+import _ "github.com/catgoose/chuck/driver/sqlite"
+import _ "github.com/catgoose/chuck/driver/postgres"
+import _ "github.com/catgoose/chuck/driver/mssql"
 ```
 
 ## Dialect Interface
@@ -87,7 +87,7 @@ The `Dialect` interface is composed from focused sub-interfaces. Each sub-interf
 `Dialect` composes all five, so passing a `Dialect` still works everywhere. But a function that only quotes identifiers can accept `Identifier` instead, making its dependency explicit and its tests simpler.
 
 ```go
-d, _ := fraggle.New(fraggle.Postgres)
+d, _ := chuck.New(chuck.Postgres)
 
 d.AutoIncrement()  // "SERIAL PRIMARY KEY"
 d.TimestampType()  // "TIMESTAMPTZ"
@@ -133,12 +133,12 @@ Each engine speaks its own dialect:
 `NormalizeIdentifier` transforms identifiers to the engine's idiomatic form. For Postgres, PascalCase names are converted to snake_case. Other engines return names unchanged.
 
 ```go
-pg := fraggle.PostgresDialect{}
+pg := chuck.PostgresDialect{}
 pg.NormalizeIdentifier("CreatedAt")  // "created_at"
 pg.NormalizeIdentifier("UserID")     // "user_id"
 pg.NormalizeIdentifier("HTMLParser") // "html_parser"
 
-sq := fraggle.SQLiteDialect{}
+sq := chuck.SQLiteDialect{}
 sq.NormalizeIdentifier("CreatedAt")  // "CreatedAt" (unchanged)
 ```
 
@@ -167,7 +167,7 @@ d.ReturningClause("id, created_at")  // SQLite:   "RETURNING id, created_at"
 `QuoteColumns` splits a comma-separated column list, normalizes and quotes each identifier, preserving sort direction suffixes:
 
 ```go
-fraggle.QuoteColumns(d, "CreatedAt, Title DESC")
+chuck.QuoteColumns(d, "CreatedAt, Title DESC")
 // Postgres: "created_at", "title" DESC
 ```
 
@@ -177,7 +177,7 @@ Functions that only need a subset of `Dialect` can accept a sub-interface direct
 
 ```go
 // Only needs identifier quoting -- accepts Identifier, not full Dialect.
-func quotedColumnList(d fraggle.Identifier, cols []string) string {
+func quotedColumnList(d chuck.Identifier, cols []string) string {
     quoted := make([]string, len(cols))
     for i, c := range cols {
         quoted[i] = d.QuoteIdentifier(c)
@@ -186,7 +186,7 @@ func quotedColumnList(d fraggle.Identifier, cols []string) string {
 }
 
 // Needs type mapping and identifiers -- accepts Dialect (which embeds both).
-func columnDDL(d fraggle.Dialect, name string) string {
+func columnDDL(d chuck.Dialect, name string) string {
     return d.QuoteIdentifier(name) + " " + d.IntType()
 }
 ```
@@ -196,11 +196,11 @@ All three implementations (`SQLiteDialect`, `PostgresDialect`, `MSSQLDialect`) s
 ## Opening Connections
 
 ```go
-import _ "github.com/catgoose/fraggle/driver/postgres"
+import _ "github.com/catgoose/chuck/driver/postgres"
 
-db, dialect, _ := fraggle.OpenURL(ctx, "postgres://user:pass@localhost:5432/myapp?sslmode=disable")
-db, dialect, _ := fraggle.OpenURL(ctx, "sqlite://:memory:")
-db, dialect, _ := fraggle.OpenURL(ctx, "sqlserver://user:pass@host:1433?database=erp")
+db, dialect, _ := chuck.OpenURL(ctx, "postgres://user:pass@localhost:5432/myapp?sslmode=disable")
+db, dialect, _ := chuck.OpenURL(ctx, "sqlite://:memory:")
+db, dialect, _ := chuck.OpenURL(ctx, "sqlserver://user:pass@host:1433?database=erp")
 ```
 
 `OpenURL` detects the engine from the URL scheme and returns a raw `*sql.DB` plus the matching `Dialect`. Supported schemes: `postgres://` (`postgresql://`), `sqlite://` (`sqlite3://`), `sqlserver://` (`mssql://`).
@@ -208,9 +208,9 @@ db, dialect, _ := fraggle.OpenURL(ctx, "sqlserver://user:pass@host:1433?database
 For SQLite, `OpenSQLite` opens a database with sensible defaults (WAL mode, 30s busy timeout, single-connection pool):
 
 ```go
-import _ "github.com/catgoose/fraggle/driver/sqlite"
+import _ "github.com/catgoose/chuck/driver/sqlite"
 
-db, dialect, _ := fraggle.OpenSQLite(ctx, "path/to/app.db")
+db, dialect, _ := chuck.OpenSQLite(ctx, "path/to/app.db")
 ```
 
 ## Schema as Code
@@ -222,7 +222,7 @@ db, dialect, _ := fraggle.OpenSQLite(ctx, "path/to/app.db")
 The `schema` package defines tables in Go. One declaration drives DDL generation, column lists, seed data, and schema snapshots.
 
 ```go
-import "github.com/catgoose/fraggle/schema"
+import "github.com/catgoose/chuck/schema"
 
 var TasksTable = schema.NewTable("Tasks").
     Columns(
@@ -438,7 +438,7 @@ The `dbrepo` package provides composable helpers that keep SQL visible. Function
 ### Building Queries
 
 ```go
-import "github.com/catgoose/fraggle/dbrepo"
+import "github.com/catgoose/chuck/dbrepo"
 
 dbrepo.Columns("ID", "Name", "Email")               // "ID, Name, Email"
 dbrepo.Placeholders("ID", "Name", "Email")           // "@ID, @Name, @Email"
@@ -494,7 +494,7 @@ w := dbrepo.NewWhere().WithDialect(dialect).
     HasVersion(3).                 // Version = @Version
     IsRoot().                      // ParentID IS NULL
     NotReplaced().                 // ReplacedByID IS NULL
-    Search("fraggle", "Name", "Bio")  // Postgres: ILIKE, others: LIKE
+    Search("chuck", "Name", "Bio")  // Postgres: ILIKE, others: LIKE
 
 // Snake-case schemas: pass the column name
 w := dbrepo.NewWhere().
@@ -555,21 +555,21 @@ dbrepo.NowFunc = func() time.Time { return fixedTime }
 >
 > -- Layman Grug
 
-Fraggle says "no" to the complexity of maintaining separate DDL strings per dialect. One schema definition. All dialects generated.
+Chuck says "no" to the complexity of maintaining separate DDL strings per dialect. One schema definition. All dialects generated.
 
 ## Engines
 
 | Engine | Constant | Driver Package |
 |--------|----------|----------------|
-| PostgreSQL | `fraggle.Postgres` | `fraggle/driver/postgres` |
-| SQLite | `fraggle.SQLite` | `fraggle/driver/sqlite` |
-| MSSQL | `fraggle.MSSQL` | `fraggle/driver/mssql` |
+| PostgreSQL | `chuck.Postgres` | `chuck/driver/postgres` |
+| SQLite | `chuck.SQLite` | `chuck/driver/sqlite` |
+| MSSQL | `chuck.MSSQL` | `chuck/driver/mssql` |
 
 > A media type is a COVENANT. A sacred compact. A pinky promise between systems.
 >
 > -- The Wisdom of the Uniform Interface
 
-A schema definition is the same kind of covenant — between your application and your database. Fraggle makes that covenant explicit, testable, and diffable.
+A schema definition is the same kind of covenant — between your application and your database. Chuck makes that covenant explicit, testable, and diffable.
 
 ## Testing
 
@@ -580,14 +580,14 @@ Tests run against all three engines. SQLite runs in-memory, Postgres and MSSQL r
 go test ./...
 
 # Integration tests against real databases
-FRAGGLE_POSTGRES_URL="postgres://user:pass@localhost:5432/testdb?sslmode=disable" \
-FRAGGLE_MSSQL_URL="sqlserver://SA:Password@localhost:1433?database=master" \
+CHUCK_POSTGRES_URL="postgres://user:pass@localhost:5432/testdb?sslmode=disable" \
+CHUCK_MSSQL_URL="sqlserver://SA:Password@localhost:1433?database=master" \
 go test ./... -v
 ```
 
 ## Philosophy
 
-Fraggle follows Go's values and the [dothog design philosophy](https://github.com/catgoose/dothog/blob/main/PHILOSOPHY.md):
+Chuck follows Go's values and the [dothog design philosophy](https://github.com/catgoose/dothog/blob/main/PHILOSOPHY.md):
 
 - **Explicit SQL, composable helpers.** Write the SQL, but don't write it by hand every time. The generated SQL is predictable — you can read it, copy it into a query tool, and run it directly.
 - **Schema as code.** Table definitions are the source of truth. One declaration drives DDL, column lists, seed data, and schema snapshots. No drift between migration files and application code.
@@ -607,7 +607,7 @@ Fraggle follows Go's values and the [dothog design philosophy](https://github.co
            │                            │
            v                            v
   ┌─────────────────────────────────────────────────┐
-  │                    fraggle                       │
+  │                    chuck                       │
   │                                                 │
   │  Dialect interface                              │
   │  ┌──────────┬──────────┬──────────┐             │
@@ -621,7 +621,7 @@ Fraggle follows Go's values and the [dothog design philosophy](https://github.co
       └─────────┘ └─────────┘ └─────────┘
 ```
 
-One schema definition at the top, dialect-specific SQL at the bottom. Fraggle
+One schema definition at the top, dialect-specific SQL at the bottom. Chuck
 generates DDL, column lists, seed data, and query fragments for whichever
 engine you're running.
 

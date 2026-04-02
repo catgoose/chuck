@@ -1,14 +1,14 @@
 package schema
 
-import "github.com/catgoose/fraggle"
+import "github.com/catgoose/chuck"
 
 // TimestampColumnDefs returns CreatedAt and UpdatedAt column definitions.
 func TimestampColumnDefs() []ColumnDef {
 	return []ColumnDef{
 		Col("CreatedAt", TypeTimestamp()).NotNull().
-			DefaultFn(func(d fraggle.Dialect) string { return d.Now() }).Immutable(),
+			DefaultFn(func(d chuck.Dialect) string { return d.Now() }).Immutable(),
 		Col("UpdatedAt", TypeTimestamp()).NotNull().
-			DefaultFn(func(d fraggle.Dialect) string { return d.Now() }),
+			DefaultFn(func(d chuck.Dialect) string { return d.Now() }),
 	}
 }
 

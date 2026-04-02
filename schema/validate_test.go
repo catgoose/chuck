@@ -5,17 +5,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/catgoose/fraggle"
+	"github.com/catgoose/chuck"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	_ "github.com/catgoose/fraggle/driver/sqlite"
+	_ "github.com/catgoose/chuck/driver/sqlite"
 )
 
 func TestValidateSchema(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
-	d := fraggle.SQLiteDialect{}
+	d := chuck.SQLiteDialect{}
 
 	table := NewTable("Items").
 		Columns(
@@ -134,7 +134,7 @@ func TestValidateSchemaPostgresNormalization(t *testing.T) {
 	// the snake_case columns that DDL creates.
 	ctx := context.Background()
 	db := openTestDB(t)
-	d := fraggle.SQLiteDialect{} // SQLite doesn't normalize, used as baseline
+	d := chuck.SQLiteDialect{} // SQLite doesn't normalize, used as baseline
 
 	table := NewTable("Accounts").
 		Columns(
@@ -154,7 +154,7 @@ func TestValidateSchemaPostgresNormalization(t *testing.T) {
 	assert.Nil(t, errs)
 
 	// Verify Postgres normalization produces snake_case names in Snapshot
-	pg := fraggle.PostgresDialect{}
+	pg := chuck.PostgresDialect{}
 	snap := table.Snapshot(pg)
 	assert.Equal(t, "accounts", snap.Name)
 	assert.Equal(t, "email", snap.Columns[1].Name)
@@ -171,7 +171,7 @@ func TestValidateSchemaIssue11Repro(t *testing.T) {
 	// On Postgres, DDL creates snake_case columns, so Snapshot must also
 	// produce snake_case names for the comparison to succeed.
 
-	pg := fraggle.PostgresDialect{}
+	pg := chuck.PostgresDialect{}
 
 	// Define table with PascalCase names (how users define schemas)
 	table := NewTable("Accounts").
@@ -211,7 +211,7 @@ func TestValidateSchemaIssue11Repro(t *testing.T) {
 	// when table and columns match exactly
 	ctx := context.Background()
 	db := openTestDB(t)
-	d := fraggle.SQLiteDialect{}
+	d := chuck.SQLiteDialect{}
 
 	for _, stmt := range table.CreateIfNotExistsSQL(d) {
 		_, err := db.ExecContext(ctx, stmt)
@@ -224,7 +224,7 @@ func TestValidateSchemaIssue11Repro(t *testing.T) {
 func TestValidateAll(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
-	d := fraggle.SQLiteDialect{}
+	d := chuck.SQLiteDialect{}
 
 	users := NewTable("Users").
 		Columns(AutoIncrCol("ID"), Col("Name", TypeString(255)).NotNull())

@@ -29,10 +29,10 @@ func TestInsertInto(t *testing.T) {
 func TestNamedArgs(t *testing.T) {
 	args := NamedArgs(map[string]any{
 		"Name":  "Gobo",
-		"Email": "gobo@fraggle.rock",
+		"Email": "gobo@chuck.rock",
 	})
 	assert.Len(t, args, 2)
 	// Keys sorted: Email, Name
-	assert.Equal(t, sql.Named("Email", "gobo@fraggle.rock"), args[0])
+	assert.Equal(t, sql.Named("Email", "gobo@chuck.rock"), args[0])
 	assert.Equal(t, sql.Named("Name", "Gobo"), args[1])
 }

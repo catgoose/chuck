@@ -6,25 +6,25 @@ import (
 	"os"
 	"testing"
 
-	"github.com/catgoose/fraggle"
-	"github.com/catgoose/fraggle/schema"
+	"github.com/catgoose/chuck"
+	"github.com/catgoose/chuck/schema"
 	"github.com/stretchr/testify/require"
 
-	_ "github.com/catgoose/fraggle/driver/mssql"
-	_ "github.com/catgoose/fraggle/driver/postgres"
-	_ "github.com/catgoose/fraggle/driver/sqlite"
+	_ "github.com/catgoose/chuck/driver/mssql"
+	_ "github.com/catgoose/chuck/driver/postgres"
+	_ "github.com/catgoose/chuck/driver/sqlite"
 )
 
 // testTable defines a representative table using most schema features.
-var testTable = schema.NewTable("fraggle_schema_test").
+var testTable = schema.NewTable("chuck_schema_test").
 	Columns(
 		schema.AutoIncrCol("ID"),
 		schema.Col("Name", schema.TypeString(255)).NotNull(),
 		schema.Col("Email", schema.TypeVarchar(255)).NotNull().Unique(),
 		schema.Col("Bio", schema.TypeText()),
 		schema.Col("Score", schema.TypeInt()).NotNull().Default("0"),
-		schema.Col("Active", schema.TypeBool()).NotNull().DefaultFn(func(d fraggle.Dialect) string {
-			if d.Engine() == fraggle.Postgres {
+		schema.Col("Active", schema.TypeBool()).NotNull().DefaultFn(func(d chuck.Dialect) string {
+			if d.Engine() == chuck.Postgres {
 				return "TRUE"
 			}
 			return "1"
@@ -34,12 +34,12 @@ var testTable = schema.NewTable("fraggle_schema_test").
 	WithSoftDelete().
 	WithVersion().
 	Indexes(
-		schema.Index("idx_fraggle_schema_test_name", "Name"),
+		schema.Index("idx_chuck_schema_test_name", "Name"),
 	)
 
 // schemaDriftTest creates a table from the declared schema, then validates it
 // using ValidateSchema to verify column names, count, nullability, and indexes match.
-func schemaDriftTest(t *testing.T, db *sql.DB, d fraggle.Dialect) {
+func schemaDriftTest(t *testing.T, db *sql.DB, d chuck.Dialect) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -69,17 +69,17 @@ func TestSchemaDriftSQLite(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	schemaDriftTest(t, db, fraggle.SQLiteDialect{})
+	schemaDriftTest(t, db, chuck.SQLiteDialect{})
 }
 
 func TestSchemaDriftPostgres(t *testing.T) {
-	dsn := os.Getenv("FRAGGLE_POSTGRES_URL")
+	dsn := os.Getenv("CHUCK_POSTGRES_URL")
 	if dsn == "" {
-		t.Skip("FRAGGLE_POSTGRES_URL not set")
+		t.Skip("CHUCK_POSTGRES_URL not set")
 	}
 
 	ctx := context.Background()
-	db, d, err := fraggle.OpenURL(ctx, dsn)
+	db, d, err := chuck.OpenURL(ctx, dsn)
 	require.NoError(t, err)
 	defer db.Close()
 
@@ -87,13 +87,13 @@ func TestSchemaDriftPostgres(t *testing.T) {
 }
 
 func TestSchemaDriftMSSQL(t *testing.T) {
-	dsn := os.Getenv("FRAGGLE_MSSQL_URL")
+	dsn := os.Getenv("CHUCK_MSSQL_URL")
 	if dsn == "" {
-		t.Skip("FRAGGLE_MSSQL_URL not set")
+		t.Skip("CHUCK_MSSQL_URL not set")
 	}
 
 	ctx := context.Background()
-	db, d, err := fraggle.OpenURL(ctx, dsn)
+	db, d, err := chuck.OpenURL(ctx, dsn)
 	require.NoError(t, err)
 	defer db.Close()
 

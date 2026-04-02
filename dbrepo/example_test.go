@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/catgoose/fraggle"
-	"github.com/catgoose/fraggle/dbrepo"
+	"github.com/catgoose/chuck"
+	"github.com/catgoose/chuck/dbrepo"
 )
 
 func ExampleColumns() {
@@ -34,21 +34,21 @@ func ExampleInsertInto() {
 }
 
 func ExampleInsertIntoQ() {
-	d, _ := fraggle.New(fraggle.Postgres)
+	d, _ := chuck.New(chuck.Postgres)
 	fmt.Println(dbrepo.InsertIntoQ(d, "Users", "Name", "Email"))
 	// Output:
 	// INSERT INTO "Users" ("Name", "Email") VALUES (@Name, @Email)
 }
 
 func ExampleColumnsQ() {
-	d, _ := fraggle.New(fraggle.Postgres)
+	d, _ := chuck.New(chuck.Postgres)
 	fmt.Println(dbrepo.ColumnsQ(d, "ID", "Name", "Email"))
 	// Output:
 	// "ID", "Name", "Email"
 }
 
 func ExampleSetClauseQ() {
-	d, _ := fraggle.New(fraggle.Postgres)
+	d, _ := chuck.New(chuck.Postgres)
 	fmt.Println(dbrepo.SetClauseQ(d, "Name", "Email"))
 	// Output:
 	// "Name" = @Name, "Email" = @Email
@@ -118,11 +118,11 @@ func ExampleWhereBuilder_treeQueries() {
 }
 
 func ExampleWhereBuilder_Search() {
-	d, _ := fraggle.New(fraggle.Postgres)
+	d, _ := chuck.New(chuck.Postgres)
 
 	w := dbrepo.NewWhere().WithDialect(d).
 		NotDeleted("deleted_at").
-		Search("fraggle", "name", "bio")
+		Search("chuck", "name", "bio")
 
 	fmt.Println(w.String())
 	// Output:
@@ -146,7 +146,7 @@ func ExampleNewSelect() {
 }
 
 func ExampleSelectBuilder_WithDialect() {
-	d, _ := fraggle.New(fraggle.Postgres)
+	d, _ := chuck.New(chuck.Postgres)
 
 	query, _ := dbrepo.NewSelect("tasks", "id", "title").
 		Where(dbrepo.NewWhere().And("id = @ID", sql.Named("ID", 1))).

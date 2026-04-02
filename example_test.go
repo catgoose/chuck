@@ -1,13 +1,13 @@
-package fraggle_test
+package chuck_test
 
 import (
 	"fmt"
 
-	"github.com/catgoose/fraggle"
+	"github.com/catgoose/chuck"
 )
 
 func ExampleNew() {
-	d, err := fraggle.New(fraggle.Postgres)
+	d, err := chuck.New(chuck.Postgres)
 	if err != nil {
 		panic(err)
 	}
@@ -26,7 +26,7 @@ func ExampleNew() {
 }
 
 func ExampleNew_sqlite() {
-	d, err := fraggle.New(fraggle.SQLite)
+	d, err := chuck.New(chuck.SQLite)
 	if err != nil {
 		panic(err)
 	}
@@ -43,7 +43,7 @@ func ExampleNew_sqlite() {
 }
 
 func ExampleNew_mssql() {
-	d, err := fraggle.New(fraggle.MSSQL)
+	d, err := chuck.New(chuck.MSSQL)
 	if err != nil {
 		panic(err)
 	}
@@ -58,7 +58,7 @@ func ExampleNew_mssql() {
 }
 
 func ExampleNew_columnTypes() {
-	d, _ := fraggle.New(fraggle.Postgres)
+	d, _ := chuck.New(chuck.Postgres)
 
 	fmt.Println(d.StringType(255))
 	fmt.Println(d.VarcharType(100))
@@ -82,8 +82,8 @@ func ExampleNew_columnTypes() {
 }
 
 func ExampleNew_normalizeIdentifier() {
-	pg, _ := fraggle.New(fraggle.Postgres)
-	sq, _ := fraggle.New(fraggle.SQLite)
+	pg, _ := chuck.New(chuck.Postgres)
+	sq, _ := chuck.New(chuck.SQLite)
 
 	fmt.Println(pg.NormalizeIdentifier("CreatedAt"))
 	fmt.Println(pg.NormalizeIdentifier("UserID"))
@@ -95,13 +95,13 @@ func ExampleNew_normalizeIdentifier() {
 }
 
 func ExampleParseEngine() {
-	e, err := fraggle.ParseEngine("postgres")
+	e, err := chuck.ParseEngine("postgres")
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println(e)
 
-	_, err = fraggle.ParseEngine("mysql")
+	_, err = chuck.ParseEngine("mysql")
 	fmt.Println(err)
 	// Output:
 	// postgres
@@ -109,9 +109,9 @@ func ExampleParseEngine() {
 }
 
 func ExampleQuoteColumns() {
-	d, _ := fraggle.New(fraggle.Postgres)
+	d, _ := chuck.New(chuck.Postgres)
 
-	fmt.Println(fraggle.QuoteColumns(d, "CreatedAt, Title DESC"))
+	fmt.Println(chuck.QuoteColumns(d, "CreatedAt, Title DESC"))
 	// Output:
 	// "created_at", "title" DESC
 }

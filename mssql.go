@@ -1,4 +1,4 @@
-package fraggle
+package chuck
 
 import (
 	"fmt"

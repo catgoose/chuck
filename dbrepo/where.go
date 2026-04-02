@@ -6,14 +6,14 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/catgoose/fraggle"
+	"github.com/catgoose/chuck"
 )
 
 // WhereBuilder constructs composable WHERE clauses with named parameters.
 type WhereBuilder struct {
 	clauses []string
 	args    []any
-	dialect fraggle.Dialect
+	dialect chuck.Dialect
 }
 
 // NewWhere creates a new WhereBuilder.
@@ -22,7 +22,7 @@ func NewWhere() *WhereBuilder {
 }
 
 // WithDialect sets the dialect for dialect-aware operations (e.g. ILIKE on Postgres).
-func (w *WhereBuilder) WithDialect(d fraggle.Dialect) *WhereBuilder {
+func (w *WhereBuilder) WithDialect(d chuck.Dialect) *WhereBuilder {
 	w.dialect = d
 	return w
 }
@@ -79,7 +79,7 @@ func (w *WhereBuilder) Search(search string, fields ...string) *WhereBuilder {
 	}
 	pattern := "%" + search + "%"
 	op := "LIKE"
-	if w.dialect != nil && w.dialect.Engine() == fraggle.Postgres {
+	if w.dialect != nil && w.dialect.Engine() == chuck.Postgres {
 		op = "ILIKE"
 	}
 	var conditions []string
@@ -182,7 +182,7 @@ func (w *WhereBuilder) NotArchived(col ...string) *WhereBuilder {
 // Pass an optional column name to override the default "archived".
 func (w *WhereBuilder) NotArchivedBool(col ...string) *WhereBuilder {
 	c := colName("archived", col)
-	if w.dialect != nil && w.dialect.Engine() == fraggle.MSSQL {
+	if w.dialect != nil && w.dialect.Engine() == chuck.MSSQL {
 		return w.And(c + " = 0")
 	}
 	return w.And("NOT " + c)

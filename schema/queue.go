@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/catgoose/fraggle"
+	"github.com/catgoose/chuck"
 )
 
 // NewQueueTable creates a job/outbox queue table with status tracking and retry support.
@@ -21,7 +21,7 @@ func NewQueueTable(name, payloadCol string) *TableDef {
 			Col("ScheduledAt", TypeTimestamp()),
 			Col("ProcessedAt", TypeTimestamp()),
 			Col("CreatedAt", TypeTimestamp()).NotNull().
-				DefaultFn(func(d fraggle.Dialect) string { return d.Now() }).Immutable(),
+				DefaultFn(func(d chuck.Dialect) string { return d.Now() }).Immutable(),
 		).
 		Indexes(
 			Index(fmt.Sprintf("idx_%s_status", lower), "Status"),

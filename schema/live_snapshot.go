@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/catgoose/fraggle"
+	"github.com/catgoose/chuck"
 )
 
 // LiveColumnSnapshot describes a column as it exists in a live database.
@@ -33,7 +33,7 @@ type LiveTableSnapshot struct {
 
 // LiveSnapshot queries the database and returns the actual schema for a table.
 // The result can be compared against a declared Snapshot() to detect drift.
-func LiveSnapshot(ctx context.Context, db *sql.DB, d fraggle.Dialect, tableName string) (LiveTableSnapshot, error) {
+func LiveSnapshot(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName string) (LiveTableSnapshot, error) {
 	snap := LiveTableSnapshot{Name: tableName}
 
 	// Check table exists
@@ -63,7 +63,7 @@ func LiveSnapshot(ctx context.Context, db *sql.DB, d fraggle.Dialect, tableName 
 }
 
 // LiveSchemaSnapshot queries the database for all listed tables and returns their live schemas.
-func LiveSchemaSnapshot(ctx context.Context, db *sql.DB, d fraggle.Dialect, tableNames ...string) ([]LiveTableSnapshot, error) {
+func LiveSchemaSnapshot(ctx context.Context, db *sql.DB, d chuck.Dialect, tableNames ...string) ([]LiveTableSnapshot, error) {
 	snaps := make([]LiveTableSnapshot, 0, len(tableNames))
 	for _, name := range tableNames {
 		snap, err := LiveSnapshot(ctx, db, d, name)
@@ -75,14 +75,14 @@ func LiveSchemaSnapshot(ctx context.Context, db *sql.DB, d fraggle.Dialect, tabl
 	return snaps, nil
 }
 
-func queryColumns(ctx context.Context, db *sql.DB, d fraggle.Dialect, tableName string) ([]LiveColumnSnapshot, error) {
+func queryColumns(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName string) ([]LiveColumnSnapshot, error) {
 	var query string
 	switch d.Engine() {
-	case fraggle.SQLite:
+	case chuck.SQLite:
 		query = `SELECT name, type, CASE WHEN "notnull" = 1 OR pk = 1 THEN 'NO' ELSE 'YES' END AS nullable, COALESCE(dflt_value, '') AS dflt FROM pragma_table_info(?)`
-	case fraggle.Postgres:
+	case chuck.Postgres:
 		query = `SELECT column_name, UPPER(data_type), is_nullable, COALESCE(column_default, '') FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 ORDER BY ordinal_position`
-	case fraggle.MSSQL:
+	case chuck.MSSQL:
 		query = `SELECT COLUMN_NAME, UPPER(DATA_TYPE), IS_NULLABLE, COALESCE(COLUMN_DEFAULT, '') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @p1 ORDER BY ORDINAL_POSITION`
 	default:
 		return nil, fmt.Errorf("unsupported engine: %s", d.Engine())
@@ -110,14 +110,14 @@ func queryColumns(ctx context.Context, db *sql.DB, d fraggle.Dialect, tableName 
 	return cols, rows.Err()
 }
 
-func queryIndexes(ctx context.Context, db *sql.DB, d fraggle.Dialect, tableName string) ([]LiveIndexSnapshot, error) {
+func queryIndexes(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName string) ([]LiveIndexSnapshot, error) {
 	var query string
 	switch d.Engine() {
-	case fraggle.SQLite:
+	case chuck.SQLite:
 		query = `SELECT name, '' AS columns FROM pragma_index_list(?) WHERE origin != 'pk'`
-	case fraggle.Postgres:
+	case chuck.Postgres:
 		query = `SELECT i.relname, pg_get_indexdef(ix.indexrelid) FROM pg_index ix JOIN pg_class t ON t.oid = ix.indrelid JOIN pg_class i ON i.oid = ix.indexrelid WHERE t.relname = $1 AND NOT ix.indisprimary`
-	case fraggle.MSSQL:
+	case chuck.MSSQL:
 		query = `SELECT si.name, STUFF((SELECT ', ' + sc.name FROM sys.index_columns ic JOIN sys.columns sc ON sc.object_id = ic.object_id AND sc.column_id = ic.column_id WHERE ic.object_id = si.object_id AND ic.index_id = si.index_id FOR XML PATH('')), 1, 2, '') FROM sys.indexes si WHERE si.object_id = OBJECT_ID(@p1) AND si.is_primary_key = 0 AND si.name IS NOT NULL`
 	default:
 		return nil, fmt.Errorf("unsupported engine: %s", d.Engine())

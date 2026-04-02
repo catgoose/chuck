@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/catgoose/fraggle"
+	"github.com/catgoose/chuck"
 )
 
 // NewEventTable creates an append-only event/log table. All columns are immutable (no updates).
@@ -20,7 +20,7 @@ func NewEventTable(name string, cols ...ColumnDef) *TableDef {
 	}
 	allCols = append(allCols,
 		Col("CreatedAt", TypeTimestamp()).NotNull().
-			DefaultFn(func(d fraggle.Dialect) string { return d.Now() }).Immutable(),
+			DefaultFn(func(d chuck.Dialect) string { return d.Now() }).Immutable(),
 	)
 	return NewTable(name).
 		Columns(allCols...).

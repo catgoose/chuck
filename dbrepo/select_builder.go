@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/catgoose/fraggle"
+	"github.com/catgoose/chuck"
 )
 
 // SelectBuilder constructs composable SELECT queries with WHERE, ORDER BY, and pagination.
@@ -16,7 +16,7 @@ type SelectBuilder struct {
 	orderBy string
 	limit   int
 	offset  int
-	dialect fraggle.Dialect
+	dialect chuck.Dialect
 }
 
 // NewSelect creates a new SelectBuilder for the given table and columns.
@@ -56,7 +56,7 @@ func (s *SelectBuilder) Paginate(limit, offset int) *SelectBuilder {
 }
 
 // WithDialect sets the dialect for pagination clause generation.
-func (s *SelectBuilder) WithDialect(d fraggle.Dialect) *SelectBuilder {
+func (s *SelectBuilder) WithDialect(d chuck.Dialect) *SelectBuilder {
 	s.dialect = d
 	return s
 }

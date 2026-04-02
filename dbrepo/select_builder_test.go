@@ -3,7 +3,7 @@ package dbrepo
 import (
 	"testing"
 
-	"github.com/catgoose/fraggle"
+	"github.com/catgoose/chuck"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -41,7 +41,7 @@ func TestSelectBuilder(t *testing.T) {
 	})
 
 	t.Run("with_dialect_pagination", func(t *testing.T) {
-		d := fraggle.MSSQLDialect{}
+		d := chuck.MSSQLDialect{}
 		sql, args := NewSelect("Tasks", "ID").
 			OrderBy("ID ASC").
 			Paginate(20, 40).

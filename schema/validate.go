@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/catgoose/fraggle"
+	"github.com/catgoose/chuck"
 )
 
 // SchemaError describes a single schema validation mismatch.
@@ -27,7 +27,7 @@ func (e SchemaError) Error() string {
 // before comparison — e.g. "CreatedAt" becomes "created_at" on Postgres.
 //
 // Returns nil if the live schema matches the declaration.
-func ValidateSchema(ctx context.Context, db *sql.DB, d fraggle.Dialect, td *TableDef) []SchemaError {
+func ValidateSchema(ctx context.Context, db *sql.DB, d chuck.Dialect, td *TableDef) []SchemaError {
 	tableName := d.NormalizeIdentifier(td.Name)
 
 	live, err := LiveSnapshot(ctx, db, d, tableName)
@@ -111,7 +111,7 @@ func ValidateSchema(ctx context.Context, db *sql.DB, d fraggle.Dialect, td *Tabl
 
 // ValidateAll validates multiple table definitions against the live database.
 // Returns all mismatches across all tables, or nil if everything matches.
-func ValidateAll(ctx context.Context, db *sql.DB, d fraggle.Dialect, tables ...*TableDef) []SchemaError {
+func ValidateAll(ctx context.Context, db *sql.DB, d chuck.Dialect, tables ...*TableDef) []SchemaError {
 	var errs []SchemaError
 	for _, td := range tables {
 		if tableErrs := ValidateSchema(ctx, db, d, td); tableErrs != nil {

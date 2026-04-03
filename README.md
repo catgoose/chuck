@@ -1,5 +1,38 @@
 # chuck
 
+<!--toc:start-->
+
+- [chuck](#chuck)
+  - [Why](#why)
+  - [Install](#install)
+  - [Dialect Interface](#dialect-interface)
+    - [Column Type Methods](#column-type-methods)
+    - [Identifier Normalization](#identifier-normalization)
+    - [DDL Methods](#ddl-methods)
+    - [Accepting Sub-Interfaces](#accepting-sub-interfaces)
+  - [Opening Connections](#opening-connections)
+  - [Schema as Code](#schema-as-code)
+    - [UUID Primary Keys](#uuid-primary-keys)
+    - [Foreign Key References](#foreign-key-references)
+    - [Traits](#traits)
+    - [Table Factories](#table-factories)
+    - [Column Lists](#column-lists)
+    - [Seed Data](#seed-data)
+    - [Schema Snapshots](#schema-snapshots)
+    - [Live Schema Snapshots](#live-schema-snapshots)
+    - [Schema Validation](#schema-validation)
+  - [Composable SQL Fragments (`dbrepo`)](#composable-sql-fragments-dbrepo)
+    - [Building Queries](#building-queries)
+    - [WhereBuilder](#wherebuilder)
+    - [SelectBuilder](#selectbuilder)
+    - [Audit Helpers](#audit-helpers)
+  - [Engines](#engines)
+  - [Testing](#testing)
+  - [Philosophy](#philosophy)
+  - [Architecture](#architecture)
+  - [License](#license)
+  <!--toc:end-->
+
 [![Go Reference](https://pkg.go.dev/badge/github.com/catgoose/chuck.svg)](https://pkg.go.dev/github.com/catgoose/chuck)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -35,6 +68,7 @@ const createTasksPostgres = `CREATE TABLE IF NOT EXISTS "tasks" (
     "created_at" TIMESTAMPTZ DEFAULT NOW(),
     "updated_at" TIMESTAMPTZ DEFAULT NOW()
 )`
+
 // Now maintain column lists for SELECT, INSERT, UPDATE -- per dialect.
 // Add a column? Update six places.
 ```
@@ -43,17 +77,17 @@ const createTasksPostgres = `CREATE TABLE IF NOT EXISTS "tasks" (
 
 ```go
 var TasksTable = schema.NewTable("Tasks").
-    Columns(
-        schema.AutoIncrCol("ID"),
-        schema.Col("Title", schema.TypeString(255)).NotNull(),
-        schema.Col("Description", schema.TypeText()),
-    ).
-    WithTimestamps().
-    WithSoftDelete()
+	Columns(
+		schema.AutoIncrCol("ID"),
+		schema.Col("Title", schema.TypeString(255)).NotNull(),
+		schema.Col("Description", schema.TypeText()),
+	).
+	WithTimestamps().
+	WithSoftDelete()
 
 // Generate DDL for any dialect
 for _, stmt := range TasksTable.CreateIfNotExistsSQL(dialect) {
-    db.Exec(stmt)
+	db.Exec(stmt)
 }
 // Column lists come free: TasksTable.InsertColumnsFor(dialect)
 ```
@@ -76,24 +110,24 @@ import _ "github.com/catgoose/chuck/driver/mssql"
 
 The `Dialect` interface is composed from focused sub-interfaces. Each sub-interface captures a single responsibility, so functions can accept only the capability they need:
 
-| Interface | Purpose |
-|-----------|---------|
-| `TypeMapper` | Maps Go types to SQL column type strings (`IntType`, `StringType`, `BoolType`, etc.) |
-| `DDLWriter` | Generates DDL statements (`CreateTableIfNotExists`, `DropTableIfExists`, `InsertOrIgnore`, etc.) |
-| `QueryWriter` | Generates query fragments (`Placeholder`, `Pagination`, `Now`, `LastInsertIDQuery`, etc.) |
-| `Identifier` | Handles SQL identifier formatting (`NormalizeIdentifier`, `QuoteIdentifier`) |
-| `Inspector` | Provides schema introspection queries (`TableExistsQuery`, `TableColumnsQuery`) |
+| Interface     | Purpose                                                                                          |
+| ------------- | ------------------------------------------------------------------------------------------------ |
+| `TypeMapper`  | Maps Go types to SQL column type strings (`IntType`, `StringType`, `BoolType`, etc.)             |
+| `DDLWriter`   | Generates DDL statements (`CreateTableIfNotExists`, `DropTableIfExists`, `InsertOrIgnore`, etc.) |
+| `QueryWriter` | Generates query fragments (`Placeholder`, `Pagination`, `Now`, `LastInsertIDQuery`, etc.)        |
+| `Identifier`  | Handles SQL identifier formatting (`NormalizeIdentifier`, `QuoteIdentifier`)                     |
+| `Inspector`   | Provides schema introspection queries (`TableExistsQuery`, `TableColumnsQuery`)                  |
 
 `Dialect` composes all five, so passing a `Dialect` still works everywhere. But a function that only quotes identifiers can accept `Identifier` instead, making its dependency explicit and its tests simpler.
 
 ```go
 d, _ := chuck.New(chuck.Postgres)
 
-d.AutoIncrement()  // "SERIAL PRIMARY KEY"
-d.TimestampType()  // "TIMESTAMPTZ"
-d.Pagination()     // "LIMIT @Limit OFFSET @Offset"
-d.Now()            // "NOW()"
-d.Placeholder(1)   // "$1"
+d.AutoIncrement() // "SERIAL PRIMARY KEY"
+d.TimestampType() // "TIMESTAMPTZ"
+d.Pagination()    // "LIMIT @Limit OFFSET @Offset"
+d.Now()           // "NOW()"
+d.Placeholder(1)  // "$1"
 ```
 
 > grug not understand why other developer make thing so hard. grug supernatural power and marvelous activity: returning html and carrying single binary.
@@ -102,31 +136,31 @@ d.Placeholder(1)   // "$1"
 
 Each engine speaks its own dialect:
 
-| Method | PostgreSQL | SQLite | MSSQL |
-|--------|-----------|--------|-------|
-| `AutoIncrement()` | `SERIAL PRIMARY KEY` | `INTEGER PRIMARY KEY AUTOINCREMENT` | `INT PRIMARY KEY IDENTITY(1,1)` |
-| `TimestampType()` | `TIMESTAMPTZ` | `TIMESTAMP` | `DATETIME` |
-| `Now()` | `NOW()` | `CURRENT_TIMESTAMP` | `GETDATE()` |
-| `Placeholder(1)` | `$1` | `?` | `@p1` |
-| `Pagination()` | `LIMIT @Limit OFFSET @Offset` | `LIMIT @Limit OFFSET @Offset` | `OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY` |
-| `BoolType()` | `BOOLEAN` | `INTEGER` | `BIT` |
-| `NormalizeIdentifier("CreatedAt")` | `created_at` | `CreatedAt` | `CreatedAt` |
-| `QuoteIdentifier("t")` | `"t"` | `"t"` | `[t]` |
+| Method                             | PostgreSQL                    | SQLite                              | MSSQL                                             |
+| ---------------------------------- | ----------------------------- | ----------------------------------- | ------------------------------------------------- |
+| `AutoIncrement()`                  | `SERIAL PRIMARY KEY`          | `INTEGER PRIMARY KEY AUTOINCREMENT` | `INT PRIMARY KEY IDENTITY(1,1)`                   |
+| `TimestampType()`                  | `TIMESTAMPTZ`                 | `TIMESTAMP`                         | `DATETIME`                                        |
+| `Now()`                            | `NOW()`                       | `CURRENT_TIMESTAMP`                 | `GETDATE()`                                       |
+| `Placeholder(1)`                   | `$1`                          | `?`                                 | `@p1`                                             |
+| `Pagination()`                     | `LIMIT @Limit OFFSET @Offset` | `LIMIT @Limit OFFSET @Offset`       | `OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY` |
+| `BoolType()`                       | `BOOLEAN`                     | `INTEGER`                           | `BIT`                                             |
+| `NormalizeIdentifier("CreatedAt")` | `created_at`                  | `CreatedAt`                         | `CreatedAt`                                       |
+| `QuoteIdentifier("t")`             | `"t"`                         | `"t"`                               | `[t]`                                             |
 
 ### Column Type Methods
 
-| Method | Purpose |
-|--------|---------|
-| `StringType(n)` | Engine's preferred string type — `NVARCHAR(n)` on MSSQL (Unicode), `TEXT` on Postgres/SQLite |
-| `VarcharType(n)` | Exact `VARCHAR(n)` — use when you need explicit length or non-Unicode on MSSQL |
-| `IntType()` | `INTEGER` / `INT` |
-| `BigIntType()` | `BIGINT` / `INTEGER` (SQLite) |
-| `FloatType()` | `DOUBLE PRECISION` / `REAL` / `FLOAT` |
-| `DecimalType(p,s)` | `NUMERIC(p,s)` / `DECIMAL(p,s)` / `REAL` (SQLite) |
-| `TextType()` | Unlimited text — `TEXT` / `NVARCHAR(MAX)` |
-| `BoolType()` | `BOOLEAN` / `INTEGER` / `BIT` |
-| `UUIDType()` | `UUID` / `TEXT` / `UNIQUEIDENTIFIER` |
-| `JSONType()` | `JSONB` / `TEXT` / `NVARCHAR(MAX)` |
+| Method             | Purpose                                                                                      |
+| ------------------ | -------------------------------------------------------------------------------------------- |
+| `StringType(n)`    | Engine's preferred string type — `NVARCHAR(n)` on MSSQL (Unicode), `TEXT` on Postgres/SQLite |
+| `VarcharType(n)`   | Exact `VARCHAR(n)` — use when you need explicit length or non-Unicode on MSSQL               |
+| `IntType()`        | `INTEGER` / `INT`                                                                            |
+| `BigIntType()`     | `BIGINT` / `INTEGER` (SQLite)                                                                |
+| `FloatType()`      | `DOUBLE PRECISION` / `REAL` / `FLOAT`                                                        |
+| `DecimalType(p,s)` | `NUMERIC(p,s)` / `DECIMAL(p,s)` / `REAL` (SQLite)                                            |
+| `TextType()`       | Unlimited text — `TEXT` / `NVARCHAR(MAX)`                                                    |
+| `BoolType()`       | `BOOLEAN` / `INTEGER` / `BIT`                                                                |
+| `UUIDType()`       | `UUID` / `TEXT` / `UNIQUEIDENTIFIER`                                                         |
+| `JSONType()`       | `JSONB` / `TEXT` / `NVARCHAR(MAX)`                                                           |
 
 ### Identifier Normalization
 
@@ -139,7 +173,7 @@ pg.NormalizeIdentifier("UserID")     // "user_id"
 pg.NormalizeIdentifier("HTMLParser") // "html_parser"
 
 sq := chuck.SQLiteDialect{}
-sq.NormalizeIdentifier("CreatedAt")  // "CreatedAt" (unchanged)
+sq.NormalizeIdentifier("CreatedAt") // "CreatedAt" (unchanged)
 ```
 
 All schema DDL methods apply normalization automatically — column names, table names, references, and index columns are all normalized for the target dialect.
@@ -160,8 +194,8 @@ d.InsertOrIgnore("users", "name, email", "'Alice', 'alice@test.com'")
 `ReturningClause` generates a `RETURNING` clause for INSERT/UPDATE statements (supported by Postgres and SQLite 3.35+, empty on MSSQL):
 
 ```go
-d.ReturningClause("id")              // Postgres: "RETURNING id"
-d.ReturningClause("id, created_at")  // SQLite:   "RETURNING id, created_at"
+d.ReturningClause("id")             // Postgres: "RETURNING id"
+d.ReturningClause("id, created_at") // SQLite:   "RETURNING id, created_at"
 ```
 
 `QuoteColumns` splits a comma-separated column list, normalizes and quotes each identifier, preserving sort direction suffixes:
@@ -178,16 +212,16 @@ Functions that only need a subset of `Dialect` can accept a sub-interface direct
 ```go
 // Only needs identifier quoting -- accepts Identifier, not full Dialect.
 func quotedColumnList(d chuck.Identifier, cols []string) string {
-    quoted := make([]string, len(cols))
-    for i, c := range cols {
-        quoted[i] = d.QuoteIdentifier(c)
-    }
-    return strings.Join(quoted, ", ")
+	quoted := make([]string, len(cols))
+	for i, c := range cols {
+		quoted[i] = d.QuoteIdentifier(c)
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // Needs type mapping and identifiers -- accepts Dialect (which embeds both).
 func columnDDL(d chuck.Dialect, name string) string {
-    return d.QuoteIdentifier(name) + " " + d.IntType()
+	return d.QuoteIdentifier(name) + " " + d.IntType()
 }
 ```
 
@@ -262,10 +296,10 @@ schema.UUIDPKCol("id")
 
 ```go
 schema.Col("TaskID", schema.TypeInt()).NotNull().
-    References("Tasks", "ID").OnDelete("CASCADE")
+	References("Tasks", "ID").OnDelete("CASCADE")
 
 schema.Col("AssigneeID", schema.TypeInt()).
-    References("Users", "ID").OnDelete("SET NULL").OnUpdate("CASCADE")
+	References("Users", "ID").OnDelete("SET NULL").OnUpdate("CASCADE")
 ```
 
 Supported actions: `CASCADE`, `SET NULL`, `SET DEFAULT`, `RESTRICT`, `NO ACTION`.
@@ -274,20 +308,20 @@ Supported actions: `CASCADE`, `SET NULL`, `SET DEFAULT`, `RESTRICT`, `NO ACTION`
 
 Traits add columns and behavior in one call. They're composable — use as many or as few as you need:
 
-| Trait | Columns Added | Purpose |
-|-------|--------------|---------|
-| `WithTimestamps()` | `CreatedAt` (immutable), `UpdatedAt` | Creation and modification tracking |
-| `WithSoftDelete()` | `DeletedAt` | Soft delete (nullable timestamp) |
-| `WithAuditTrail()` | `CreatedBy`, `UpdatedBy`, `DeletedBy` | User attribution |
-| `WithVersion()` | `Version` (default 1) | Optimistic concurrency control |
-| `WithStatus(default)` | `Status` | Workflow state |
-| `WithSortOrder()` | `SortOrder` | Manual ordering |
-| `WithNotes()` | `Notes` | Nullable text field |
-| `WithUUID()` | `UUID` (immutable, unique) | External identifier |
-| `WithParent()` | `ParentID` | Tree/hierarchy structures |
-| `WithReplacement()` | `ReplacedByID` | Entity lineage tracking |
-| `WithArchive()` | `ArchivedAt` | Archival timestamp |
-| `WithExpiry()` | `ExpiresAt` | Expiration timestamp |
+| Trait                 | Columns Added                         | Purpose                            |
+| --------------------- | ------------------------------------- | ---------------------------------- |
+| `WithTimestamps()`    | `CreatedAt` (immutable), `UpdatedAt`  | Creation and modification tracking |
+| `WithSoftDelete()`    | `DeletedAt`                           | Soft delete (nullable timestamp)   |
+| `WithAuditTrail()`    | `CreatedBy`, `UpdatedBy`, `DeletedBy` | User attribution                   |
+| `WithVersion()`       | `Version` (default 1)                 | Optimistic concurrency control     |
+| `WithStatus(default)` | `Status`                              | Workflow state                     |
+| `WithSortOrder()`     | `SortOrder`                           | Manual ordering                    |
+| `WithNotes()`         | `Notes`                               | Nullable text field                |
+| `WithUUID()`          | `UUID` (immutable, unique)            | External identifier                |
+| `WithParent()`        | `ParentID`                            | Tree/hierarchy structures          |
+| `WithReplacement()`   | `ReplacedByID`                        | Entity lineage tracking            |
+| `WithArchive()`       | `ArchivedAt`                          | Archival timestamp                 |
+| `WithExpiry()`        | `ExpiresAt`                           | Expiration timestamp               |
 
 Traits use PascalCase column names internally. For Postgres, these are automatically normalized to snake_case (`CreatedAt` becomes `created_at`). SQLite and MSSQL preserve the original casing.
 
@@ -296,12 +330,12 @@ Traits use PascalCase column names internally. For Postgres, these are automatic
 Common table patterns have factory functions:
 
 ```go
-schema.NewMappingTable("UserRoles", "UserID", "RoleID")     // Many-to-many join table
-schema.NewConfigTable("Settings", "Key", "Value")            // Key-value config
-schema.NewLookupTable("Options", "Category", "Label")        // Lookup with grouping
-schema.NewLookupJoinTable("TaskOptions")                      // Owner-to-lookup join table
-schema.NewEventTable("AuditLog", cols...)                     // Append-only (all immutable)
-schema.NewQueueTable("Jobs", "Payload")                       // Job queue with scheduling
+schema.NewMappingTable("UserRoles", "UserID", "RoleID") // Many-to-many join table
+schema.NewConfigTable("Settings", "Key", "Value")       // Key-value config
+schema.NewLookupTable("Options", "Category", "Label")   // Lookup with grouping
+schema.NewLookupJoinTable("TaskOptions")                // Owner-to-lookup join table
+schema.NewEventTable("AuditLog", cols...)               // Append-only (all immutable)
+schema.NewQueueTable("Jobs", "Payload")                 // Job queue with scheduling
 ```
 
 ### Column Lists
@@ -309,17 +343,17 @@ schema.NewQueueTable("Jobs", "Payload")                       // Job queue with 
 `TableDef` knows which columns to use in each context:
 
 ```go
-TasksTable.SelectColumns()  // All columns (raw names)
-TasksTable.InsertColumns()  // Excludes auto-increment
-TasksTable.UpdateColumns()  // Only mutable columns
+TasksTable.SelectColumns() // All columns (raw names)
+TasksTable.InsertColumns() // Excludes auto-increment
+TasksTable.UpdateColumns() // Only mutable columns
 ```
 
 Dialect-aware variants normalize names for the target engine:
 
 ```go
-TasksTable.SelectColumnsFor(dialect)  // Postgres: ["id", "title", "created_at", ...]
-TasksTable.InsertColumnsFor(dialect)  // Postgres: ["title", "description", ...]
-TasksTable.UpdateColumnsFor(dialect)  // Postgres: ["title", "description", "updated_at", ...]
+TasksTable.SelectColumnsFor(dialect) // Postgres: ["id", "title", "created_at", ...]
+TasksTable.InsertColumnsFor(dialect) // Postgres: ["title", "description", ...]
+TasksTable.UpdateColumnsFor(dialect) // Postgres: ["title", "description", "updated_at", ...]
 ```
 
 ### Seed Data
@@ -328,17 +362,17 @@ Declare initial rows as part of the schema. Seed is idempotent via the dialect's
 
 ```go
 var StatusTable = schema.NewTable("Statuses").
-    Columns(
-        schema.AutoIncrCol("ID"),
-        schema.Col("Name", schema.TypeVarchar(50)).NotNull().Unique(),
-    ).
-    WithSeedRows(
-        schema.SeedRow{"Name": "'active'"},
-        schema.SeedRow{"Name": "'archived'"},
-    )
+	Columns(
+		schema.AutoIncrCol("ID"),
+		schema.Col("Name", schema.TypeVarchar(50)).NotNull().Unique(),
+	).
+	WithSeedRows(
+		schema.SeedRow{"Name": "'active'"},
+		schema.SeedRow{"Name": "'archived'"},
+	)
 
 for _, stmt := range StatusTable.SeedSQL(dialect) {
-    db.Exec(stmt)
+	db.Exec(stmt)
 }
 ```
 
@@ -376,9 +410,9 @@ declared := TasksTable.Snapshot(dialect)
 
 // Compare — column names, types, nullability
 for i, dc := range declared.Columns {
-    if dc.Name != live.Columns[i].Name {
-        log.Printf("column mismatch at position %d: declared %s, live %s", i, dc.Name, live.Columns[i].Name)
-    }
+	if dc.Name != live.Columns[i].Name {
+		log.Printf("column mismatch at position %d: declared %s, live %s", i, dc.Name, live.Columns[i].Name)
+	}
 }
 
 // Or compare the text representations side by side
@@ -398,7 +432,7 @@ fmt.Println(live.String())
 // Validate a single table
 errs := schema.ValidateSchema(ctx, db, dialect, TasksTable)
 for _, e := range errs {
-    log.Println(e) // "tasks.priority: column missing"
+	log.Println(e) // "tasks.priority: column missing"
 }
 
 // Validate all tables at once
@@ -409,12 +443,12 @@ Use it in CI to catch schema drift:
 
 ```go
 func TestSchemaDrift(t *testing.T) {
-    errs := schema.ValidateSchema(ctx, db, dialect, TasksTable)
-    if errs != nil {
-        for _, e := range errs {
-            t.Error(e)
-        }
-    }
+	errs := schema.ValidateSchema(ctx, db, dialect, TasksTable)
+	if errs != nil {
+		for _, e := range errs {
+			t.Error(e)
+		}
+	}
 }
 ```
 
@@ -449,9 +483,9 @@ dbrepo.InsertInto("Users", "Name", "Email")          // "INSERT INTO Users (Name
 Dialect-aware variants quote identifiers:
 
 ```go
-dbrepo.ColumnsQ(d, "ID", "Name")                     // `"ID", "Name"` (Postgres)
-dbrepo.SetClauseQ(d, "Name", "Email")                // `"Name" = @Name, "Email" = @Email`
-dbrepo.InsertIntoQ(d, "Users", "Name", "Email")      // `INSERT INTO "Users" ("Name", "Email") VALUES (@Name, @Email)`
+dbrepo.ColumnsQ(d, "ID", "Name")                // `"ID", "Name"` (Postgres)
+dbrepo.SetClauseQ(d, "Name", "Email")           // `"Name" = @Name, "Email" = @Email`
+dbrepo.InsertIntoQ(d, "Users", "Name", "Email") // `INSERT INTO "Users" ("Name", "Email") VALUES (@Name, @Email)`
 ```
 
 ### WhereBuilder
@@ -460,8 +494,8 @@ Compose WHERE clauses with named parameters:
 
 ```go
 w := dbrepo.NewWhere().
-    And("DepartmentID = @DeptID", sql.Named("DeptID", 5)).
-    AndIf(searchTerm != "", "Name LIKE @Pattern", sql.Named("Pattern", "%"+searchTerm+"%"))
+	And("DepartmentID = @DeptID", sql.Named("DeptID", 5)).
+	AndIf(searchTerm != "", "Name LIKE @Pattern", sql.Named("Pattern", "%"+searchTerm+"%"))
 
 query := "SELECT * FROM Users " + w.String()
 // "SELECT * FROM Users WHERE DepartmentID = @DeptID AND Name LIKE @Pattern"
@@ -471,8 +505,8 @@ query := "SELECT * FROM Users " + w.String()
 
 ```go
 w := dbrepo.NewWhere().
-    And("Status = @Status", sql.Named("Status", "active")).
-    Or("Status = @Status2", sql.Named("Status2", "pending"))
+	And("Status = @Status", sql.Named("Status", "active")).
+	Or("Status = @Status2", sql.Named("Status2", "pending"))
 // WHERE Status = @Status OR Status = @Status2
 ```
 
@@ -506,10 +540,10 @@ w := dbrepo.NewWhere().
 
 ```go
 sb := dbrepo.NewSelect("Tasks", "ID", "Title", "Status").
-    Where(w).
-    OrderByMap("title:asc,created_at:desc", columnMap, "ID ASC").
-    Paginate(20, 0).
-    WithDialect(dialect)
+	Where(w).
+	OrderByMap("title:asc,created_at:desc", columnMap, "ID ASC").
+	Paginate(20, 0).
+	WithDialect(dialect)
 
 query, args := sb.Build()
 countQuery, countArgs := sb.CountQuery()
@@ -538,11 +572,11 @@ dbrepo.SetDeleteAudit(&t.DeletedAt, &t.DeletedBy, currentUser)
 // State management
 dbrepo.SetStatus(&t.Status, "published")
 dbrepo.SetArchive(&t.ArchivedAt)
-dbrepo.ClearArchive(&t.ArchivedAt)     // sets sql.NullTime.Valid = false (SQL NULL)
+dbrepo.ClearArchive(&t.ArchivedAt) // sets sql.NullTime.Valid = false (SQL NULL)
 dbrepo.SetExpiry(&t.ExpiresAt, future)
-dbrepo.ClearExpiry(&t.ExpiresAt)       // sets sql.NullTime.Valid = false (SQL NULL)
+dbrepo.ClearExpiry(&t.ExpiresAt) // sets sql.NullTime.Valid = false (SQL NULL)
 dbrepo.SetReplacement(&t.ReplacedByID, newID)
-dbrepo.ClearReplacement(&t.ReplacedByID)  // sets sql.NullInt64.Valid = false (SQL NULL)
+dbrepo.ClearReplacement(&t.ReplacedByID) // sets sql.NullInt64.Valid = false (SQL NULL)
 ```
 
 For deterministic tests, override the clock:
@@ -559,11 +593,11 @@ Chuck says "no" to the complexity of maintaining separate DDL strings per dialec
 
 ## Engines
 
-| Engine | Constant | Driver Package |
-|--------|----------|----------------|
+| Engine     | Constant         | Driver Package          |
+| ---------- | ---------------- | ----------------------- |
 | PostgreSQL | `chuck.Postgres` | `chuck/driver/postgres` |
-| SQLite | `chuck.SQLite` | `chuck/driver/sqlite` |
-| MSSQL | `chuck.MSSQL` | `chuck/driver/mssql` |
+| SQLite     | `chuck.SQLite`   | `chuck/driver/sqlite`   |
+| MSSQL      | `chuck.MSSQL`    | `chuck/driver/mssql`    |
 
 > A media type is a COVENANT. A sacred compact. A pinky promise between systems.
 >
@@ -581,8 +615,8 @@ go test ./...
 
 # Integration tests against real databases
 CHUCK_POSTGRES_URL="postgres://user:pass@localhost:5432/testdb?sslmode=disable" \
-CHUCK_MSSQL_URL="sqlserver://SA:Password@localhost:1433?database=master" \
-go test ./... -v
+	CHUCK_MSSQL_URL="sqlserver://SA:Password@localhost:1433?database=master" \
+	go test ./... -v
 ```
 
 ## Philosophy
@@ -593,7 +627,6 @@ Chuck follows Go's values and the [dothog design philosophy](https://github.com/
 - **Schema as code.** Table definitions are the source of truth. One declaration drives DDL, column lists, seed data, and schema snapshots. No drift between migration files and application code.
 - **Domain patterns as primitives.** Soft delete, optimistic locking, archival — these aren't framework features. They're small functions that set timestamps and check values. If you need soft delete, call `SetSoftDelete`. If you don't, don't.
 - **A little copying is better than a little dependency.** The Go standard library is the dependency. Everything else earns its place.
-
 
 ## Architecture
 

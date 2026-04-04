@@ -178,6 +178,156 @@ func TestSnapshotCheck(t *testing.T) {
 	})
 }
 
+func TestSnapshotUniqueIndex(t *testing.T) {
+	table := NewTable("Users").
+		Columns(
+			AutoIncrCol("ID"),
+			Col("Email", TypeVarchar(255)).NotNull(),
+		).
+		Indexes(
+			UniqueIndex("idx_users_email", "Email"),
+		)
+
+	t.Run("struct_fields", func(t *testing.T) {
+		snap := table.Snapshot(chuck.PostgresDialect{})
+		require.Len(t, snap.Indexes, 1)
+		assert.Equal(t, "idx_users_email", snap.Indexes[0].Name)
+		assert.Equal(t, "Email", snap.Indexes[0].Columns)
+		assert.True(t, snap.Indexes[0].Unique)
+		assert.Empty(t, snap.Indexes[0].Where)
+	})
+
+	t.Run("json_round_trip", func(t *testing.T) {
+		snap := table.Snapshot(chuck.SQLiteDialect{})
+		data, err := json.MarshalIndent(snap, "", "  ")
+		require.NoError(t, err)
+		assert.Contains(t, string(data), `"unique": true`)
+
+		var decoded TableSnapshot
+		require.NoError(t, json.Unmarshal(data, &decoded))
+		require.Len(t, decoded.Indexes, 1)
+		assert.True(t, decoded.Indexes[0].Unique)
+		assert.Empty(t, decoded.Indexes[0].Where)
+	})
+
+	t.Run("snapshot_string", func(t *testing.T) {
+		s := table.SnapshotString(chuck.PostgresDialect{})
+		assert.Contains(t, s, "UNIQUE INDEX idx_users_email ON (Email)")
+	})
+}
+
+func TestSnapshotPartialIndex(t *testing.T) {
+	table := NewTable("Users").
+		Columns(
+			AutoIncrCol("ID"),
+			Col("Email", TypeVarchar(255)).NotNull(),
+			Col("DeletedAt", TypeTimestamp()),
+		).
+		Indexes(
+			PartialIndex("idx_active_users", "Email").Where("DeletedAt IS NULL"),
+		)
+
+	t.Run("struct_fields", func(t *testing.T) {
+		snap := table.Snapshot(chuck.PostgresDialect{})
+		require.Len(t, snap.Indexes, 1)
+		assert.Equal(t, "idx_active_users", snap.Indexes[0].Name)
+		assert.False(t, snap.Indexes[0].Unique)
+		assert.Equal(t, "DeletedAt IS NULL", snap.Indexes[0].Where)
+	})
+
+	t.Run("json_round_trip", func(t *testing.T) {
+		snap := table.Snapshot(chuck.SQLiteDialect{})
+		data, err := json.MarshalIndent(snap, "", "  ")
+		require.NoError(t, err)
+		assert.Contains(t, string(data), `"where": "DeletedAt IS NULL"`)
+
+		var decoded TableSnapshot
+		require.NoError(t, json.Unmarshal(data, &decoded))
+		require.Len(t, decoded.Indexes, 1)
+		assert.False(t, decoded.Indexes[0].Unique)
+		assert.Equal(t, "DeletedAt IS NULL", decoded.Indexes[0].Where)
+	})
+
+	t.Run("snapshot_string", func(t *testing.T) {
+		s := table.SnapshotString(chuck.PostgresDialect{})
+		assert.Contains(t, s, "INDEX idx_active_users ON (Email) WHERE DeletedAt IS NULL")
+		assert.NotContains(t, s, "UNIQUE INDEX idx_active_users")
+	})
+}
+
+func TestSnapshotUniquePartialIndex(t *testing.T) {
+	table := NewTable("Users").
+		Columns(
+			AutoIncrCol("ID"),
+			Col("Email", TypeVarchar(255)).NotNull(),
+			Col("DeletedAt", TypeTimestamp()),
+		).
+		Indexes(
+			UniquePartialIndex("idx_users_email_active", "Email").Where("DeletedAt IS NULL"),
+		)
+
+	t.Run("struct_fields", func(t *testing.T) {
+		snap := table.Snapshot(chuck.PostgresDialect{})
+		require.Len(t, snap.Indexes, 1)
+		idx := snap.Indexes[0]
+		assert.Equal(t, "idx_users_email_active", idx.Name)
+		assert.True(t, idx.Unique)
+		assert.Equal(t, "DeletedAt IS NULL", idx.Where)
+	})
+
+	t.Run("json_round_trip", func(t *testing.T) {
+		snap := table.Snapshot(chuck.SQLiteDialect{})
+		data, err := json.MarshalIndent(snap, "", "  ")
+		require.NoError(t, err)
+		assert.Contains(t, string(data), `"unique": true`)
+		assert.Contains(t, string(data), `"where": "DeletedAt IS NULL"`)
+
+		var decoded TableSnapshot
+		require.NoError(t, json.Unmarshal(data, &decoded))
+		require.Len(t, decoded.Indexes, 1)
+		assert.True(t, decoded.Indexes[0].Unique)
+		assert.Equal(t, "DeletedAt IS NULL", decoded.Indexes[0].Where)
+	})
+
+	t.Run("snapshot_string", func(t *testing.T) {
+		s := table.SnapshotString(chuck.PostgresDialect{})
+		assert.Contains(t, s, "UNIQUE INDEX idx_users_email_active ON (Email) WHERE DeletedAt IS NULL")
+	})
+}
+
+func TestSnapshotMixedIndexes(t *testing.T) {
+	table := NewTable("Users").
+		Columns(
+			AutoIncrCol("ID"),
+			Col("Email", TypeVarchar(255)).NotNull(),
+			Col("Name", TypeString(255)),
+			Col("DeletedAt", TypeTimestamp()),
+		).
+		Indexes(
+			Index("idx_users_name", "Name"),
+			UniqueIndex("idx_users_email", "Email"),
+			UniquePartialIndex("idx_users_email_active", "Email").Where("DeletedAt IS NULL"),
+		)
+
+	snap := table.Snapshot(chuck.PostgresDialect{})
+	require.Len(t, snap.Indexes, 3)
+
+	// Plain index
+	assert.Equal(t, "idx_users_name", snap.Indexes[0].Name)
+	assert.False(t, snap.Indexes[0].Unique)
+	assert.Empty(t, snap.Indexes[0].Where)
+
+	// Unique index
+	assert.Equal(t, "idx_users_email", snap.Indexes[1].Name)
+	assert.True(t, snap.Indexes[1].Unique)
+	assert.Empty(t, snap.Indexes[1].Where)
+
+	// Unique partial index
+	assert.Equal(t, "idx_users_email_active", snap.Indexes[2].Name)
+	assert.True(t, snap.Indexes[2].Unique)
+	assert.Equal(t, "DeletedAt IS NULL", snap.Indexes[2].Where)
+}
+
 func TestSchemaSnapshot(t *testing.T) {
 	users := NewTable("Users").
 		Columns(AutoIncrCol("ID"))

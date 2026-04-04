@@ -299,7 +299,7 @@ func (t *TableDef) CreateSQL(d chuck.Dialect) []string {
 
 	stmts := []string{create}
 	for _, idx := range t.indexes {
-		stmts = append(stmts, d.CreateIndexIfNotExists(idx.name, tableName, idx.columns))
+		stmts = append(stmts, idx.ddl(d, tableName))
 	}
 	return stmts
 }
@@ -311,7 +311,7 @@ func (t *TableDef) CreateIfNotExistsSQL(d chuck.Dialect) []string {
 
 	stmts := []string{create}
 	for _, idx := range t.indexes {
-		stmts = append(stmts, d.CreateIndexIfNotExists(idx.name, tableName, idx.columns))
+		stmts = append(stmts, idx.ddlIfNotExists(d, tableName))
 	}
 	return stmts
 }

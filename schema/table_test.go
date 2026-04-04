@@ -540,6 +540,138 @@ func TestCreateSQL(t *testing.T) {
 	})
 }
 
+func TestUniqueIndexDDL(t *testing.T) {
+	table := NewTable("Users").
+		Columns(
+			AutoIncrCol("ID"),
+			Col("Email", TypeVarchar(255)).NotNull(),
+		).
+		Indexes(
+			UniqueIndex("idx_users_email", "Email"),
+		)
+
+	t.Run("postgres", func(t *testing.T) {
+		d := chuck.PostgresDialect{}
+		stmts := table.CreateIfNotExistsSQL(d)
+		require.Len(t, stmts, 2)
+		assert.Equal(t, `CREATE UNIQUE INDEX IF NOT EXISTS "idx_users_email" ON "users"("email")`, stmts[1])
+	})
+
+	t.Run("sqlite", func(t *testing.T) {
+		d := chuck.SQLiteDialect{}
+		stmts := table.CreateIfNotExistsSQL(d)
+		require.Len(t, stmts, 2)
+		assert.Equal(t, `CREATE UNIQUE INDEX IF NOT EXISTS "idx_users_email" ON "Users"("Email")`, stmts[1])
+	})
+
+	t.Run("mssql", func(t *testing.T) {
+		d := chuck.MSSQLDialect{}
+		stmts := table.CreateIfNotExistsSQL(d)
+		require.Len(t, stmts, 2)
+		assert.Contains(t, stmts[1], "IF NOT EXISTS")
+		assert.Contains(t, stmts[1], "CREATE UNIQUE INDEX [idx_users_email] ON [Users]([Email])")
+	})
+}
+
+func TestPartialIndexDDL(t *testing.T) {
+	table := NewTable("Users").
+		Columns(
+			AutoIncrCol("ID"),
+			Col("Email", TypeVarchar(255)).NotNull(),
+			Col("DeletedAt", TypeTimestamp()),
+		).
+		Indexes(
+			PartialIndex("idx_active_users", "Email").Where("DeletedAt IS NULL"),
+		)
+
+	t.Run("postgres", func(t *testing.T) {
+		d := chuck.PostgresDialect{}
+		stmts := table.CreateIfNotExistsSQL(d)
+		require.Len(t, stmts, 2)
+		assert.Equal(t, `CREATE INDEX IF NOT EXISTS "idx_active_users" ON "users"("email") WHERE DeletedAt IS NULL`, stmts[1])
+	})
+
+	t.Run("sqlite", func(t *testing.T) {
+		d := chuck.SQLiteDialect{}
+		stmts := table.CreateIfNotExistsSQL(d)
+		require.Len(t, stmts, 2)
+		assert.Equal(t, `CREATE INDEX IF NOT EXISTS "idx_active_users" ON "Users"("Email") WHERE DeletedAt IS NULL`, stmts[1])
+	})
+
+	t.Run("mssql", func(t *testing.T) {
+		d := chuck.MSSQLDialect{}
+		stmts := table.CreateIfNotExistsSQL(d)
+		require.Len(t, stmts, 2)
+		assert.Contains(t, stmts[1], "IF NOT EXISTS")
+		assert.Contains(t, stmts[1], "CREATE INDEX [idx_active_users] ON [Users]([Email]) WHERE DeletedAt IS NULL")
+	})
+}
+
+func TestUniquePartialIndexDDL(t *testing.T) {
+	table := NewTable("Users").
+		Columns(
+			AutoIncrCol("ID"),
+			Col("Email", TypeVarchar(255)).NotNull(),
+			Col("DeletedAt", TypeTimestamp()),
+		).
+		Indexes(
+			UniquePartialIndex("idx_users_email_active", "Email").Where("DeletedAt IS NULL"),
+		)
+
+	t.Run("postgres", func(t *testing.T) {
+		d := chuck.PostgresDialect{}
+		stmts := table.CreateIfNotExistsSQL(d)
+		require.Len(t, stmts, 2)
+		assert.Equal(t, `CREATE UNIQUE INDEX IF NOT EXISTS "idx_users_email_active" ON "users"("email") WHERE DeletedAt IS NULL`, stmts[1])
+	})
+
+	t.Run("sqlite", func(t *testing.T) {
+		d := chuck.SQLiteDialect{}
+		stmts := table.CreateIfNotExistsSQL(d)
+		require.Len(t, stmts, 2)
+		assert.Equal(t, `CREATE UNIQUE INDEX IF NOT EXISTS "idx_users_email_active" ON "Users"("Email") WHERE DeletedAt IS NULL`, stmts[1])
+	})
+
+	t.Run("mssql", func(t *testing.T) {
+		d := chuck.MSSQLDialect{}
+		stmts := table.CreateIfNotExistsSQL(d)
+		require.Len(t, stmts, 2)
+		assert.Contains(t, stmts[1], "IF NOT EXISTS")
+		assert.Contains(t, stmts[1], "CREATE UNIQUE INDEX [idx_users_email_active] ON [Users]([Email]) WHERE DeletedAt IS NULL")
+	})
+}
+
+func TestCreateSQLWithUniqueAndPartialIndexes(t *testing.T) {
+	table := NewTable("Users").
+		Columns(
+			AutoIncrCol("ID"),
+			Col("Email", TypeVarchar(255)).NotNull(),
+			Col("DeletedAt", TypeTimestamp()),
+		).
+		Indexes(
+			Index("idx_users_email", "Email"),
+			UniqueIndex("idx_users_email_uniq", "Email"),
+			UniquePartialIndex("idx_users_email_active", "Email").Where("DeletedAt IS NULL"),
+		)
+
+	d := chuck.SQLiteDialect{}
+	stmts := table.CreateSQL(d)
+	require.Len(t, stmts, 4) // CREATE TABLE + 3 indexes
+
+	// Plain index (no IF NOT EXISTS in CreateSQL)
+	assert.Contains(t, stmts[1], `"idx_users_email"`)
+	assert.NotContains(t, stmts[1], "UNIQUE")
+
+	// Unique index
+	assert.Contains(t, stmts[2], "CREATE UNIQUE INDEX")
+	assert.Contains(t, stmts[2], `"idx_users_email_uniq"`)
+
+	// Unique partial index
+	assert.Contains(t, stmts[3], "CREATE UNIQUE INDEX")
+	assert.Contains(t, stmts[3], `"idx_users_email_active"`)
+	assert.Contains(t, stmts[3], "WHERE DeletedAt IS NULL")
+}
+
 func TestTypeFuncs(t *testing.T) {
 	d := chuck.PostgresDialect{}
 

@@ -28,6 +28,8 @@ type ColumnSnapshot struct {
 type IndexSnapshot struct {
 	Name    string `json:"name"`
 	Columns string `json:"columns"`
+	Unique  bool   `json:"unique,omitempty"`
+	Where   string `json:"where,omitempty"`
 }
 
 // TableSnapshot describes a table's full resolved schema for a given dialect.
@@ -83,6 +85,8 @@ func (t *TableDef) Snapshot(d chuck.Dialect) TableSnapshot {
 		snap.Indexes = append(snap.Indexes, IndexSnapshot{
 			Name:    idx.name,
 			Columns: idx.columns,
+			Unique:  idx.unique,
+			Where:   idx.where,
 		})
 	}
 
@@ -144,7 +148,15 @@ func (t *TableDef) SnapshotString(d chuck.Dialect) string {
 	}
 
 	for _, idx := range snap.Indexes {
-		fmt.Fprintf(&b, "  INDEX %s ON (%s)\n", idx.Name, idx.Columns)
+		prefix := "INDEX"
+		if idx.Unique {
+			prefix = "UNIQUE INDEX"
+		}
+		if idx.Where != "" {
+			fmt.Fprintf(&b, "  %s %s ON (%s) WHERE %s\n", prefix, idx.Name, idx.Columns, idx.Where)
+		} else {
+			fmt.Fprintf(&b, "  %s %s ON (%s)\n", prefix, idx.Name, idx.Columns)
+		}
 	}
 
 	for _, uc := range snap.UniqueConstraints {

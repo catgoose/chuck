@@ -84,3 +84,8 @@ func (PostgresDialect) TableColumnsQuery() string {
 func (d PostgresDialect) InsertOrIgnore(table, columns, values string) string {
 	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT DO NOTHING", d.QuoteIdentifier(table), columns, values)
 }
+
+func (d PostgresDialect) Upsert(table, columns, values, conflictColumns, updateSet string) string {
+	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
+		d.QuoteIdentifier(table), columns, values, conflictColumns, updateSet)
+}

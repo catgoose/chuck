@@ -241,6 +241,13 @@ func ExampleNamedArgs() {
 	// Name=Alice
 }
 
+func ExampleUpsertIntoQ() {
+	d, _ := chuck.New(chuck.Postgres)
+	fmt.Println(dbrepo.UpsertIntoQ(d, "Users", []string{"Email"}, "Email", "Name", "Age"))
+	// Output:
+	// INSERT INTO "Users" ("Email", "Name", "Age") VALUES (@Email, @Name, @Age) ON CONFLICT ("Email") DO UPDATE SET "Name" = EXCLUDED."Name", "Age" = EXCLUDED."Age"
+}
+
 func ExampleBuildOrderByClause() {
 	columnMap := map[string]string{
 		"name":       "Name",

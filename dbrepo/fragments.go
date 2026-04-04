@@ -132,6 +132,75 @@ func BulkInsertInto(d chuck.Dialect, table string, cols []string, rowCount int) 
 		quotedTable, colList, strings.Join(rows, ", "))
 }
 
+// UpsertInto builds a dialect-aware UPSERT statement (INSERT ... ON CONFLICT DO UPDATE
+// or MERGE for MSSQL). conflictCols are the columns that determine uniqueness; all
+// remaining columns in cols are updated on conflict.
+//
+//	UpsertInto(pgDialect, "Users", []string{"Email"}, "Email", "Name", "Age") =>
+//	  INSERT INTO "Users" ("Email", "Name", "Age") VALUES (@Email, @Name, @Age)
+//	  ON CONFLICT ("Email") DO UPDATE SET "Name" = EXCLUDED."Name", "Age" = EXCLUDED."Age"
+func UpsertInto(d chuck.Dialect, table string, conflictCols []string, cols ...string) string {
+	updateCols := nonConflictCols(cols, conflictCols)
+	updateSet := upsertSetClause(d, updateCols)
+	return d.Upsert(table, Columns(cols...), Placeholders(cols...), Columns(conflictCols...), updateSet)
+}
+
+// UpsertIntoQ builds a dialect-aware UPSERT statement with identifier quoting.
+//
+//	UpsertIntoQ(pgDialect, "Users", []string{"Email"}, "Email", "Name", "Age") =>
+//	  INSERT INTO "Users" ("Email", "Name", "Age") VALUES (@Email, @Name, @Age)
+//	  ON CONFLICT ("Email") DO UPDATE SET "Name" = EXCLUDED."Name", "Age" = EXCLUDED."Age"
+func UpsertIntoQ(d chuck.Dialect, table string, conflictCols []string, cols ...string) string {
+	updateCols := nonConflictCols(cols, conflictCols)
+	updateSet := upsertSetClauseQ(d, updateCols)
+	return d.Upsert(table, ColumnsQ(d, cols...), Placeholders(cols...), ColumnsQ(d, conflictCols...), updateSet)
+}
+
+// nonConflictCols returns columns from cols that are not in conflictCols.
+func nonConflictCols(cols, conflictCols []string) []string {
+	conflict := make(map[string]bool, len(conflictCols))
+	for _, c := range conflictCols {
+		conflict[c] = true
+	}
+	var result []string
+	for _, c := range cols {
+		if !conflict[c] {
+			result = append(result, c)
+		}
+	}
+	return result
+}
+
+// upsertSetClause builds the SET fragment for an upsert's update portion.
+// For Postgres/SQLite it uses EXCLUDED.col, for MSSQL it uses Source.col.
+func upsertSetClause(d chuck.Dialect, cols []string) string {
+	ref := excludedRef(d)
+	parts := make([]string, len(cols))
+	for i, c := range cols {
+		parts[i] = fmt.Sprintf("%s = %s.%s", c, ref, c)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// upsertSetClauseQ builds the SET fragment with identifier quoting.
+func upsertSetClauseQ(d chuck.Dialect, cols []string) string {
+	ref := excludedRef(d)
+	parts := make([]string, len(cols))
+	for i, c := range cols {
+		qc := d.QuoteIdentifier(c)
+		parts[i] = fmt.Sprintf("%s = %s.%s", qc, ref, qc)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// excludedRef returns the source-row reference keyword for upsert SET clauses.
+func excludedRef(d chuck.Dialect) string {
+	if d.Engine() == chuck.MSSQL {
+		return "Source"
+	}
+	return "EXCLUDED"
+}
+
 // NamedArgs converts a map to a slice of sql.NamedArg values suitable for
 // passing to database/sql query methods. Keys are sorted for deterministic output.
 func NamedArgs(m map[string]any) []any {

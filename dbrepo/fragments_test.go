@@ -103,3 +103,76 @@ func TestNamedArgs(t *testing.T) {
 	assert.Equal(t, sql.Named("Email", "gobo@chuck.rock"), args[0])
 	assert.Equal(t, sql.Named("Name", "Gobo"), args[1])
 }
+
+func TestUpsertInto(t *testing.T) {
+	t.Run("Postgres", func(t *testing.T) {
+		d, _ := chuck.New(chuck.Postgres)
+		result := UpsertInto(d, "Users", []string{"Email"}, "Email", "Name", "Age")
+		expected := `INSERT INTO "Users" (Email, Name, Age) VALUES (@Email, @Name, @Age) ON CONFLICT (Email) DO UPDATE SET Name = EXCLUDED.Name, Age = EXCLUDED.Age`
+		assert.Equal(t, expected, result)
+	})
+
+	t.Run("SQLite", func(t *testing.T) {
+		d, _ := chuck.New(chuck.SQLite)
+		result := UpsertInto(d, "Users", []string{"Email"}, "Email", "Name", "Age")
+		expected := `INSERT INTO "Users" (Email, Name, Age) VALUES (@Email, @Name, @Age) ON CONFLICT (Email) DO UPDATE SET Name = EXCLUDED.Name, Age = EXCLUDED.Age`
+		assert.Equal(t, expected, result)
+	})
+
+	t.Run("MSSQL", func(t *testing.T) {
+		d, _ := chuck.New(chuck.MSSQL)
+		result := UpsertInto(d, "Users", []string{"Email"}, "Email", "Name", "Age")
+		assert.Contains(t, result, "MERGE [Users] AS Target")
+		assert.Contains(t, result, "USING (VALUES (@Email, @Name, @Age)) AS Source (Email, Name, Age)")
+		assert.Contains(t, result, "ON Target.Email = Source.Email")
+		assert.Contains(t, result, "WHEN MATCHED THEN UPDATE SET Name = Source.Name, Age = Source.Age")
+		assert.Contains(t, result, "WHEN NOT MATCHED THEN INSERT (Email, Name, Age) VALUES (@Email, @Name, @Age)")
+	})
+
+	t.Run("multiple_conflict_columns", func(t *testing.T) {
+		d, _ := chuck.New(chuck.Postgres)
+		result := UpsertInto(d, "Events", []string{"UserID", "EventDate"}, "UserID", "EventDate", "Score", "Notes")
+		expected := `INSERT INTO "Events" (UserID, EventDate, Score, Notes) VALUES (@UserID, @EventDate, @Score, @Notes) ON CONFLICT (UserID, EventDate) DO UPDATE SET Score = EXCLUDED.Score, Notes = EXCLUDED.Notes`
+		assert.Equal(t, expected, result)
+	})
+
+	t.Run("single_update_column", func(t *testing.T) {
+		d, _ := chuck.New(chuck.Postgres)
+		result := UpsertInto(d, "Config", []string{"Key"}, "Key", "Value")
+		expected := `INSERT INTO "Config" (Key, Value) VALUES (@Key, @Value) ON CONFLICT (Key) DO UPDATE SET Value = EXCLUDED.Value`
+		assert.Equal(t, expected, result)
+	})
+}
+
+func TestUpsertIntoQ(t *testing.T) {
+	t.Run("Postgres", func(t *testing.T) {
+		d, _ := chuck.New(chuck.Postgres)
+		result := UpsertIntoQ(d, "Users", []string{"Email"}, "Email", "Name", "Age")
+		expected := `INSERT INTO "Users" ("Email", "Name", "Age") VALUES (@Email, @Name, @Age) ON CONFLICT ("Email") DO UPDATE SET "Name" = EXCLUDED."Name", "Age" = EXCLUDED."Age"`
+		assert.Equal(t, expected, result)
+	})
+
+	t.Run("SQLite", func(t *testing.T) {
+		d, _ := chuck.New(chuck.SQLite)
+		result := UpsertIntoQ(d, "Users", []string{"Email"}, "Email", "Name", "Age")
+		expected := `INSERT INTO "Users" ("Email", "Name", "Age") VALUES (@Email, @Name, @Age) ON CONFLICT ("Email") DO UPDATE SET "Name" = EXCLUDED."Name", "Age" = EXCLUDED."Age"`
+		assert.Equal(t, expected, result)
+	})
+
+	t.Run("MSSQL", func(t *testing.T) {
+		d, _ := chuck.New(chuck.MSSQL)
+		result := UpsertIntoQ(d, "Users", []string{"Email"}, "Email", "Name", "Age")
+		assert.Contains(t, result, "MERGE [Users] AS Target")
+		assert.Contains(t, result, "USING (VALUES (@Email, @Name, @Age)) AS Source ([Email], [Name], [Age])")
+		assert.Contains(t, result, "ON Target.[Email] = Source.[Email]")
+		assert.Contains(t, result, "WHEN MATCHED THEN UPDATE SET [Name] = Source.[Name], [Age] = Source.[Age]")
+		assert.Contains(t, result, "WHEN NOT MATCHED THEN INSERT ([Email], [Name], [Age]) VALUES (@Email, @Name, @Age)")
+	})
+
+	t.Run("multiple_conflict_columns_MSSQL", func(t *testing.T) {
+		d, _ := chuck.New(chuck.MSSQL)
+		result := UpsertIntoQ(d, "Events", []string{"UserID", "EventDate"}, "UserID", "EventDate", "Score")
+		assert.Contains(t, result, "ON Target.[UserID] = Source.[UserID] AND Target.[EventDate] = Source.[EventDate]")
+		assert.Contains(t, result, "WHEN MATCHED THEN UPDATE SET [Score] = Source.[Score]")
+	})
+}

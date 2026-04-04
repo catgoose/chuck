@@ -84,3 +84,8 @@ func (SQLiteDialect) TableColumnsQuery() string {
 func (d SQLiteDialect) InsertOrIgnore(table, columns, values string) string {
 	return fmt.Sprintf("INSERT OR IGNORE INTO %s (%s) VALUES (%s)", d.QuoteIdentifier(table), columns, values)
 }
+
+func (d SQLiteDialect) Upsert(table, columns, values, conflictColumns, updateSet string) string {
+	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
+		d.QuoteIdentifier(table), columns, values, conflictColumns, updateSet)
+}

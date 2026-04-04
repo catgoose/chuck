@@ -90,6 +90,7 @@ type ColumnDef struct {
 	refColumn  string
 	onDelete   string
 	onUpdate   string
+	checkExpr  string
 }
 
 // Col creates a new column definition. By default columns are nullable and mutable.
@@ -165,6 +166,9 @@ func (c ColumnDef) OnDelete(action string) ColumnDef { c.onDelete = action; retu
 // OnUpdate sets the referential action for UPDATE (e.g. "CASCADE", "SET NULL").
 func (c ColumnDef) OnUpdate(action string) ColumnDef { c.onUpdate = action; return c }
 
+// Check adds a CHECK constraint with the given SQL expression (e.g. "age >= 0").
+func (c ColumnDef) Check(expr string) ColumnDef { c.checkExpr = expr; return c }
+
 // Name returns the column name.
 func (c ColumnDef) Name() string { return c.name }
 
@@ -201,6 +205,10 @@ func (c ColumnDef) ddl(d chuck.Dialect) string {
 			ref += " ON UPDATE " + c.onUpdate
 		}
 		parts = append(parts, ref)
+	}
+
+	if c.checkExpr != "" {
+		parts = append(parts, fmt.Sprintf("CHECK (%s)", c.checkExpr))
 	}
 
 	return strings.Join(parts, " ")

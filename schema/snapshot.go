@@ -21,6 +21,7 @@ type ColumnSnapshot struct {
 	RefColumn  string `json:"references_column,omitempty"`
 	OnDelete   string `json:"on_delete,omitempty"`
 	OnUpdate   string `json:"on_update,omitempty"`
+	Check      string `json:"check,omitempty"`
 }
 
 // IndexSnapshot describes a single index.
@@ -74,6 +75,7 @@ func (t *TableDef) Snapshot(d chuck.Dialect) TableSnapshot {
 			cs.OnDelete = c.onDelete
 			cs.OnUpdate = c.onUpdate
 		}
+		cs.Check = c.checkExpr
 		snap.Columns = append(snap.Columns, cs)
 	}
 
@@ -131,6 +133,9 @@ func (t *TableDef) SnapshotString(d chuck.Dialect) string {
 				ref += " ON UPDATE " + c.OnUpdate
 			}
 			parts = append(parts, ref)
+		}
+		if c.Check != "" {
+			parts = append(parts, fmt.Sprintf("CHECK (%s)", c.Check))
 		}
 		if !c.Mutable {
 			parts = append(parts, "[immutable]")

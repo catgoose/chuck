@@ -35,6 +35,7 @@ type TableDef struct {
 	indexes           []IndexDef
 	uniqueConstraints []UniqueConstraint
 	seedRows          []SeedRow
+	seedValueRows     []SeedValues
 	hasSoftDelete     bool
 	hasVersion        bool
 	hasExpiry         bool
@@ -159,14 +160,15 @@ func (t *TableDef) SeedRows() []SeedRow {
 
 // HasSeedData reports whether any seed rows have been declared.
 func (t *TableDef) HasSeedData() bool {
-	return len(t.seedRows) > 0
+	return len(t.seedRows) > 0 || len(t.seedValueRows) > 0
 }
 
 // SeedSQL returns idempotent INSERT statements for all seed rows using the
-// dialect's InsertOrIgnore method.
-// Only columns present in the SeedRow are included — missing columns use their DB defaults.
+// dialect's InsertOrIgnore method. It includes both raw SeedRow entries and
+// typed SeedValues entries (SeedValues are converted to SQL literals per dialect).
+// Only columns present in the seed row are included — missing columns use their DB defaults.
 func (t *TableDef) SeedSQL(d chuck.Dialect) []string {
-	if len(t.seedRows) == 0 {
+	if len(t.seedRows) == 0 && len(t.seedValueRows) == 0 {
 		return nil
 	}
 
@@ -190,6 +192,7 @@ func (t *TableDef) SeedSQL(d chuck.Dialect) []string {
 			strings.Join(vals, ", "),
 		))
 	}
+	stmts = append(stmts, t.seedValuesSQL(d)...)
 	return stmts
 }
 

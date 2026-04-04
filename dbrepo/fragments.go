@@ -92,6 +92,46 @@ func InsertIntoQ(d chuck.Identifier, table string, cols ...string) string {
 		d.QuoteIdentifier(table), ColumnsQ(d, cols...), Placeholders(cols...))
 }
 
+// BulkInsertInto builds a multi-row INSERT INTO … VALUES … statement with
+// dialect-specific positional placeholders and quoted identifiers.
+//
+// Unlike InsertInto/InsertIntoQ which use @Name placeholders, BulkInsertInto
+// uses the dialect's Placeholder method to produce positional parameters
+// ($1, $2 for Postgres; ? for SQLite; @p1, @p2 for MSSQL).
+//
+// The caller is responsible for ensuring the total parameter count
+// (len(cols) * rowCount) stays within the database engine's limit:
+//   - SQLite:    999 (default SQLITE_MAX_VARIABLE_NUMBER)
+//   - MSSQL:    2100
+//   - Postgres: 65535
+//
+// Example:
+//
+//	BulkInsertInto(pgDialect, "users", []string{"name", "email"}, 3)
+//	// => INSERT INTO "users" ("name", "email") VALUES ($1, $2), ($3, $4), ($5, $6)
+func BulkInsertInto(d chuck.Dialect, table string, cols []string, rowCount int) string {
+	quotedTable := d.QuoteIdentifier(table)
+	quotedCols := make([]string, len(cols))
+	for i, c := range cols {
+		quotedCols[i] = d.QuoteIdentifier(c)
+	}
+	colList := strings.Join(quotedCols, ", ")
+
+	rows := make([]string, rowCount)
+	n := 1
+	for r := range rowCount {
+		ph := make([]string, len(cols))
+		for c := range cols {
+			ph[c] = d.Placeholder(n)
+			n++
+		}
+		rows[r] = "(" + strings.Join(ph, ", ") + ")"
+	}
+
+	return fmt.Sprintf("INSERT INTO %s (%s) VALUES %s",
+		quotedTable, colList, strings.Join(rows, ", "))
+}
+
 // NamedArgs converts a map to a slice of sql.NamedArg values suitable for
 // passing to database/sql query methods. Keys are sorted for deterministic output.
 func NamedArgs(m map[string]any) []any {

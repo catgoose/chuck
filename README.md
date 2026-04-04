@@ -21,6 +21,8 @@
     - [Schema Snapshots](#schema-snapshots)
     - [Live Schema Snapshots](#live-schema-snapshots)
     - [Schema Validation](#schema-validation)
+    - [Schema Ensure](#schema-ensure)
+      - [Structured Diffs](#structured-diffs)
   - [Composable SQL Fragments (`dbrepo`)](#composable-sql-fragments-dbrepo)
     - [Building Queries](#building-queries)
     - [WhereBuilder](#wherebuilder)
@@ -465,6 +467,96 @@ Multi-table variant:
 snaps, err := schema.LiveSchemaSnapshot(ctx, db, dialect, "users", "tasks", "statuses")
 ```
 
+For structured, machine-readable drift detection (JSON output, typed diffs), see `DiffSchema` and `DiffAll` in the [Schema Ensure](#schema-ensure) section below.
+
+### Schema Ensure
+
+> grug note: in development, grug want table to appear when grug declare it. in production,
+> grug want loud alarm if table not match declaration. grug not want same behavior in both places.
+> grug has mass enlightenment: same function, different mode.
+
+`Ensure` validates your schema against the live database -- and in development, bootstraps what's missing. Your schema definition is the covenant. Ensure enforces it.
+
+| Mode         | Missing tables      | Drift in existing tables | Makes changes? |
+| ------------ | ------------------- | ------------------------ | -------------- |
+| `ModeStrict` | Error               | Error                    | Never          |
+| `ModeDev`    | Auto-create + seed  | Error                    | Creates only   |
+| `ModeDryRun` | Reports in diff     | Reports in diff          | Never          |
+
+**ModeStrict** -- production. The covenant is law. If the schema doesn't match, you hear about it immediately:
+
+```go
+result, err := schema.Ensure(ctx, db, dialect, tables, schema.WithMode(schema.ModeStrict))
+if err != nil {
+    var ensureErr *schema.EnsureError
+    if errors.As(err, &ensureErr) {
+        for _, d := range ensureErr.Diffs {
+            log.Printf("drift: %s", d.Table)
+        }
+    }
+}
+```
+
+**ModeDev** -- convenience. Tables appear when you declare them. Seed data flows in. But if an existing table has drifted, you still get an error -- the covenant holds for what already exists:
+
+```go
+result, err := schema.Ensure(ctx, db, dialect, tables, schema.WithMode(schema.ModeDev))
+// result.TablesCreated: ["statuses", "tasks"]
+// result.TablesSeeded:  ["statuses"]
+```
+
+Tables are created in foreign-key order automatically. No manual ordering needed.
+
+**ModeDryRun** -- measure twice, cut once. Reports everything, changes nothing. Use before deploying to see exactly what's different:
+
+```go
+result, _ := schema.Ensure(ctx, db, dialect, tables,
+    schema.WithMode(schema.ModeDryRun),
+    schema.WithDiffOutput(os.Stdout),
+)
+for _, d := range result.Diffs {
+    if d.HasDrift {
+        log.Printf("%s has drift", d.Table)
+    }
+}
+```
+
+#### Structured Diffs
+
+The diff is the representation that carries controls. It tells you -- or your CI pipeline, or an agent -- exactly what changed and what to do about it. No migration framework. No up/down files. The diff IS the instruction set.
+
+```go
+diff, err := schema.DiffSchema(ctx, db, dialect, TasksTable)
+// diff.AddedColumns   -- in your code, not in the database
+// diff.RemovedColumns  -- in the database, not in your code
+// diff.ChangedColumns  -- nullability mismatches
+// diff.MissingIndexes  -- declared indexes not found live
+// diff.ExtraIndexes    -- live indexes not in your declaration
+// diff.TableMissing    -- table doesn't exist at all
+// diff.HasDrift        -- true if any of the above are non-empty
+```
+
+Diffs are JSON-serializable. Write them to a file for CI artifacts, pipe them to stdout for review, or feed them to whatever consumes structured data:
+
+```go
+// Write a single diff
+diff.WriteTo(os.Stdout)
+diff.WriteJSON("drift-report.json")
+
+// Write all diffs
+diffs, _ := schema.DiffAll(ctx, db, dialect, UsersTable, TasksTable)
+schema.WriteDiffsTo(diffs, os.Stdout)
+schema.WriteDiffsJSON(diffs, "all-diffs.json")
+
+// Or capture during Ensure
+var buf bytes.Buffer
+schema.Ensure(ctx, db, dialect, tables,
+    schema.WithMode(schema.ModeDryRun),
+    schema.WithDiffOutput(&buf),
+    schema.WithDiffFile("ensure-report.json"),
+)
+```
+
 ## Composable SQL Fragments (`dbrepo`)
 
 The `dbrepo` package provides composable helpers that keep SQL visible. Functions use `@Name` placeholders with `sql.Named()` for dialect-agnostic parameter binding.
@@ -631,23 +723,24 @@ Chuck follows Go's values and the [dothog design philosophy](https://github.com/
 ## Architecture
 
 ```
-  ┌─────────────────────────────────────────────────┐
-  │                  your application                │
-  │                                                 │
-  │  schema.NewTable("Tasks")     dbrepo.NewWhere() │
-  │        │                            │           │
-  └────────┼────────────────────────────┼───────────┘
-           │                            │
-           v                            v
-  ┌─────────────────────────────────────────────────┐
-  │                    chuck                       │
-  │                                                 │
-  │  Dialect interface                              │
-  │  ┌──────────┬──────────┬──────────┐             │
-  │  │TypeMapper│DDLWriter │QueryWriter│             │
-  │  │Identifier│Inspector │          │             │
-  │  └──────────┴──────────┴──────────┘             │
-  └────────┬───────────┬───────────┬────────────────┘
+  ┌─────────────────────────────────────────────────────────┐
+  │                    your application                      │
+  │                                                         │
+  │  schema.NewTable("Tasks")   schema.Ensure()   dbrepo   │
+  │        │                       │                  │     │
+  └────────┼───────────────────────┼──────────────────┼─────┘
+           │                       │                  │
+           v                       v                  v
+  ┌─────────────────────────────────────────────────────────┐
+  │                       chuck                             │
+  │                                                         │
+  │  Dialect interface         Ensure pipeline              │
+  │  ┌──────────┬──────────┐   ┌────────────────────────┐   │
+  │  │TypeMapper│DDLWriter │   │ DiffSchema → SchemaDiff│   │
+  │  │Query     │Identifier│   │ Strict / Dev / DryRun  │   │
+  │  │Writer   │Inspector │   │ JSON diff output       │   │
+  │  └──────────┴──────────┘   └────────────────────────┘   │
+  └────────┬───────────┬───────────┬────────────────────────┘
            │           │           │
       ┌────v────┐ ┌────v────┐ ┌───v─────┐
       │ SQLite  │ │Postgres │ │  MSSQL  │
@@ -656,7 +749,8 @@ Chuck follows Go's values and the [dothog design philosophy](https://github.com/
 
 One schema definition at the top, dialect-specific SQL at the bottom. Chuck
 generates DDL, column lists, seed data, and query fragments for whichever
-engine you're running.
+engine you're running. `Ensure` ties it together: validate in production,
+bootstrap in development, diff before deploying.
 
 ## License
 

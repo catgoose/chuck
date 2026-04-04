@@ -973,6 +973,45 @@ CHUCK_POSTGRES_URL="postgres://user:pass@localhost:5432/testdb?sslmode=disable" 
       └─────────┘ └─────────┘ └─────────┘
 ```
 
+<details>
+<summary>Mermaid version</summary>
+
+```mermaid
+graph TB
+    subgraph app ["Your Application"]
+        NT["schema.NewTable()"]
+        EN["schema.Ensure()"]
+        DR["dbrepo"]
+    end
+
+    subgraph chuck ["chuck"]
+        subgraph dialect ["Dialect Interface"]
+            TM["TypeMapper"]
+            DW["DDLWriter"]
+            QW["QueryWriter"]
+            ID["Identifier"]
+            IN["Inspector"]
+        end
+        subgraph ensure ["Ensure Pipeline"]
+            DIFF["DiffSchema → SchemaDiff"]
+            MODES["Strict · Dev · DryRun"]
+        end
+    end
+
+    NT --> dialect
+    EN --> ensure
+    DR --> dialect
+
+    dialect --> SQLite[(SQLite)]
+    dialect --> Postgres[(PostgreSQL)]
+    dialect --> MSSQL[(MSSQL)]
+    ensure --> SQLite
+    ensure --> Postgres
+    ensure --> MSSQL
+```
+
+</details>
+
 One schema definition at the top, dialect-specific SQL at the bottom. Enter the application with a single table definition and a set of standardized interfaces. Follow the methods. Let the dialect drive the output. That is all.
 
 > past is already past -- don't debug it

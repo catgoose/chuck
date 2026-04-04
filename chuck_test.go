@@ -196,6 +196,16 @@ func TestMSSQLDialect(t *testing.T) {
 		assert.Contains(t, stmt, "WHEN MATCHED THEN UPDATE SET [Name] = Source.[Name]")
 		assert.Contains(t, stmt, "WHEN NOT MATCHED THEN INSERT ([Name], [Email]) VALUES (@Name, @Email)")
 	})
+
+	t.Run("IsNull", func(t *testing.T) {
+		assert.Equal(t, "ISNULL([Col], 'default')", d.IsNull("Col", "'default'"))
+		assert.Equal(t, "ISNULL([Price], 0)", d.IsNull("Price", "0"))
+	})
+
+	t.Run("Concat", func(t *testing.T) {
+		assert.Equal(t, "[First] + [Last]", d.Concat("First", "Last"))
+		assert.Equal(t, "[First] + ' ' + [Last]", d.Concat("First", "' '", "Last"))
+	})
 }
 
 func TestSQLiteDialect(t *testing.T) {
@@ -284,6 +294,16 @@ func TestSQLiteDialect(t *testing.T) {
 	t.Run("Upsert", func(t *testing.T) {
 		stmt := d.Upsert("Users", `"Name", "Email"`, "@Name, @Email", `"Email"`, `"Name" = EXCLUDED."Name"`)
 		assert.Equal(t, `INSERT INTO "Users" ("Name", "Email") VALUES (@Name, @Email) ON CONFLICT ("Email") DO UPDATE SET "Name" = EXCLUDED."Name"`, stmt)
+	})
+
+	t.Run("IsNull", func(t *testing.T) {
+		assert.Equal(t, `IFNULL("Col", 'default')`, d.IsNull("Col", "'default'"))
+		assert.Equal(t, `IFNULL("Price", 0)`, d.IsNull("Price", "0"))
+	})
+
+	t.Run("Concat", func(t *testing.T) {
+		assert.Equal(t, `"First" || "Last"`, d.Concat("First", "Last"))
+		assert.Equal(t, `"First" || ' ' || "Last"`, d.Concat("First", "' '", "Last"))
 	})
 }
 
@@ -388,6 +408,18 @@ func TestPostgresDialect(t *testing.T) {
 		stmt := d.Upsert("Users", `"Name", "Email"`, "@Name, @Email", `"Email"`, `"Name" = EXCLUDED."Name"`)
 		assert.Equal(t, `INSERT INTO "Users" ("Name", "Email") VALUES (@Name, @Email) ON CONFLICT ("Email") DO UPDATE SET "Name" = EXCLUDED."Name"`, stmt)
 	})
+
+	t.Run("IsNull", func(t *testing.T) {
+		// Postgres normalizes identifiers to snake_case
+		assert.Equal(t, `COALESCE("col", 'default')`, d.IsNull("Col", "'default'"))
+		assert.Equal(t, `COALESCE("price", 0)`, d.IsNull("Price", "0"))
+	})
+
+	t.Run("Concat", func(t *testing.T) {
+		// Postgres normalizes identifiers to snake_case
+		assert.Equal(t, `"first" || "last"`, d.Concat("First", "Last"))
+		assert.Equal(t, `"first" || ' ' || "last"`, d.Concat("First", "' '", "Last"))
+	})
 }
 
 // TestDialectConsistency verifies cross-dialect invariants that all
@@ -424,6 +456,8 @@ func TestDialectConsistency(t *testing.T) {
 			assert.NotEmpty(t, d.CreateIndexIfNotExists("idx", "t", "col"))
 			assert.NotEmpty(t, d.TableExistsQuery())
 			assert.NotEmpty(t, d.TableColumnsQuery())
+			assert.NotEmpty(t, d.IsNull("col", "'fallback'"))
+			assert.NotEmpty(t, d.Concat("a", "b"))
 		})
 
 		t.Run(name+"/last_insert_id_consistency", func(t *testing.T) {

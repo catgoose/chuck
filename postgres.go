@@ -1,6 +1,9 @@
 package chuck
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Compile-time interface checks.
 var (
@@ -68,6 +71,22 @@ func (d PostgresDialect) DropTableIfExists(table string) string {
 func (d PostgresDialect) CreateIndexIfNotExists(indexName, table, columns string) string {
 	return fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s(%s)",
 		d.QuoteIdentifier(indexName), d.QuoteIdentifier(table), QuoteColumns(d, columns))
+}
+
+func (d PostgresDialect) IsNull(col, fallback string) string {
+	return fmt.Sprintf("COALESCE(%s, %s)", d.QuoteIdentifier(d.NormalizeIdentifier(col)), fallback)
+}
+
+func (d PostgresDialect) Concat(parts ...string) string {
+	quoted := make([]string, len(parts))
+	for i, p := range parts {
+		if isStringLiteral(p) {
+			quoted[i] = p
+		} else {
+			quoted[i] = d.QuoteIdentifier(d.NormalizeIdentifier(p))
+		}
+	}
+	return strings.Join(quoted, " || ")
 }
 
 func (PostgresDialect) LastInsertIDQuery() string { return "" }

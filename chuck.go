@@ -64,6 +64,13 @@ type QueryWriter interface {
 	Now() string
 	LastInsertIDQuery() string
 	SupportsLastInsertID() bool
+	// IsNull returns a dialect-specific expression that evaluates to fallback
+	// when col is NULL (e.g. COALESCE, IFNULL, ISNULL).
+	IsNull(col, fallback string) string
+	// Concat returns a dialect-specific concatenation of the given parts.
+	// Parts wrapped in single quotes (string literals) are passed through as-is;
+	// bare identifiers are normalized and quoted.
+	Concat(parts ...string) string
 }
 
 // Identifier handles SQL identifier formatting.
@@ -111,6 +118,11 @@ func QuoteColumns(d Identifier, columns string) string {
 		quoted[i] = d.QuoteIdentifier(d.NormalizeIdentifier(part)) + suffix
 	}
 	return strings.Join(quoted, ", ")
+}
+
+// isStringLiteral reports whether s is a SQL string literal (wrapped in single quotes).
+func isStringLiteral(s string) bool {
+	return len(s) >= 2 && s[0] == '\'' && s[len(s)-1] == '\''
 }
 
 // New returns a Dialect for the given engine.

@@ -1,6 +1,9 @@
 package chuck
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Compile-time interface checks.
 var (
@@ -67,6 +70,22 @@ func (d SQLiteDialect) DropTableIfExists(table string) string {
 func (d SQLiteDialect) CreateIndexIfNotExists(indexName, table, columns string) string {
 	return fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s(%s)",
 		d.QuoteIdentifier(indexName), d.QuoteIdentifier(table), QuoteColumns(d, columns))
+}
+
+func (d SQLiteDialect) IsNull(col, fallback string) string {
+	return fmt.Sprintf("IFNULL(%s, %s)", d.QuoteIdentifier(d.NormalizeIdentifier(col)), fallback)
+}
+
+func (d SQLiteDialect) Concat(parts ...string) string {
+	quoted := make([]string, len(parts))
+	for i, p := range parts {
+		if isStringLiteral(p) {
+			quoted[i] = p
+		} else {
+			quoted[i] = d.QuoteIdentifier(d.NormalizeIdentifier(p))
+		}
+	}
+	return strings.Join(quoted, " || ")
 }
 
 func (SQLiteDialect) LastInsertIDQuery() string { return "" }

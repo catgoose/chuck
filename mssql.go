@@ -91,6 +91,22 @@ func (d MSSQLDialect) CreateIndexIfNotExists(indexName, table, columns string) s
 	)
 }
 
+func (d MSSQLDialect) IsNull(col, fallback string) string {
+	return fmt.Sprintf("ISNULL(%s, %s)", d.QuoteIdentifier(d.NormalizeIdentifier(col)), fallback)
+}
+
+func (d MSSQLDialect) Concat(parts ...string) string {
+	quoted := make([]string, len(parts))
+	for i, p := range parts {
+		if isStringLiteral(p) {
+			quoted[i] = p
+		} else {
+			quoted[i] = d.QuoteIdentifier(d.NormalizeIdentifier(p))
+		}
+	}
+	return strings.Join(quoted, " + ")
+}
+
 func (MSSQLDialect) LastInsertIDQuery() string { return "SELECT SCOPE_IDENTITY() AS ID" }
 
 func (MSSQLDialect) SupportsLastInsertID() bool { return false }

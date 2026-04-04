@@ -8,10 +8,18 @@ import (
 	"github.com/catgoose/chuck"
 )
 
+// joinClause represents a single JOIN in a SELECT query.
+type joinClause struct {
+	joinType  string // "JOIN" or "LEFT JOIN"
+	table     string
+	condition string
+}
+
 // SelectBuilder constructs composable SELECT queries with WHERE, ORDER BY, and pagination.
 type SelectBuilder struct {
 	table   string
 	cols    string
+	joins   []joinClause
 	where   *WhereBuilder
 	orderBy string
 	limit   int
@@ -61,14 +69,38 @@ func (s *SelectBuilder) WithDialect(d chuck.Dialect) *SelectBuilder {
 	return s
 }
 
+// Join adds an INNER JOIN clause. The table name is dialect-quoted when a dialect
+// is set; the condition is passed through as raw SQL.
+func (s *SelectBuilder) Join(table, condition string) *SelectBuilder {
+	s.joins = append(s.joins, joinClause{joinType: "JOIN", table: table, condition: condition})
+	return s
+}
+
+// LeftJoin adds a LEFT JOIN clause. The table name is dialect-quoted when a dialect
+// is set; the condition is passed through as raw SQL.
+func (s *SelectBuilder) LeftJoin(table, condition string) *SelectBuilder {
+	s.joins = append(s.joins, joinClause{joinType: "LEFT JOIN", table: table, condition: condition})
+	return s
+}
+
 // Build returns the complete SQL query string and the collected arguments.
 func (s *SelectBuilder) Build() (query string, args []any) {
 	var parts []string
 	tableName := s.table
+	cols := s.cols
 	if s.dialect != nil {
 		tableName = s.dialect.QuoteIdentifier(s.table)
+		cols = quoteDotQualifiedColumns(s.dialect, s.cols)
 	}
-	parts = append(parts, fmt.Sprintf("SELECT %s FROM %s", s.cols, tableName))
+	parts = append(parts, fmt.Sprintf("SELECT %s FROM %s", cols, tableName))
+
+	for _, j := range s.joins {
+		jt := j.table
+		if s.dialect != nil {
+			jt = s.dialect.QuoteIdentifier(j.table)
+		}
+		parts = append(parts, fmt.Sprintf("%s %s ON %s", j.joinType, jt, j.condition))
+	}
 
 	if s.where.HasConditions() {
 		parts = append(parts, s.where.String())
@@ -96,7 +128,7 @@ func (s *SelectBuilder) Build() (query string, args []any) {
 	return strings.Join(parts, " "), args
 }
 
-// CountQuery returns a COUNT(*) query using the same FROM and WHERE clauses.
+// CountQuery returns a COUNT(*) query using the same FROM, JOIN, and WHERE clauses.
 func (s *SelectBuilder) CountQuery() (query string, args []any) {
 	var parts []string
 	tableName := s.table
@@ -105,9 +137,36 @@ func (s *SelectBuilder) CountQuery() (query string, args []any) {
 	}
 	parts = append(parts, fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName))
 
+	for _, j := range s.joins {
+		jt := j.table
+		if s.dialect != nil {
+			jt = s.dialect.QuoteIdentifier(j.table)
+		}
+		parts = append(parts, fmt.Sprintf("%s %s ON %s", j.joinType, jt, j.condition))
+	}
+
 	if s.where.HasConditions() {
 		parts = append(parts, s.where.String())
 	}
 
 	return strings.Join(parts, " "), s.where.Args()
+}
+
+// quoteDotQualifiedColumns takes a comma-separated column list and quotes only
+// dot-qualified names (Table.Column) by quoting each part separately.
+// Simple column names are left as-is to preserve backward compatibility.
+func quoteDotQualifiedColumns(d chuck.Identifier, cols string) string {
+	parts := strings.Split(cols, ", ")
+	result := make([]string, len(parts))
+	for i, col := range parts {
+		col = strings.TrimSpace(col)
+		if dotIdx := strings.Index(col, "."); dotIdx >= 0 {
+			table := col[:dotIdx]
+			column := col[dotIdx+1:]
+			result[i] = d.QuoteIdentifier(table) + "." + d.QuoteIdentifier(column)
+		} else {
+			result[i] = col
+		}
+	}
+	return strings.Join(result, ", ")
 }

@@ -329,6 +329,43 @@ func TestColumnDDL(t *testing.T) {
 		ddl := c.ddl(ms)
 		assert.Contains(t, ddl, `REFERENCES [Tasks]([ID]) ON DELETE CASCADE ON UPDATE SET NULL`)
 	})
+
+	t.Run("check_basic", func(t *testing.T) {
+		c := Col("Age", TypeInt()).Check("Age >= 0")
+		ddl := c.ddl(d)
+		assert.Contains(t, ddl, "CHECK (Age >= 0)")
+	})
+
+	t.Run("check_multiple_conditions", func(t *testing.T) {
+		c := Col("Status", TypeVarchar(20)).Check("Status IN ('active', 'inactive', 'pending')")
+		ddl := c.ddl(d)
+		assert.Contains(t, ddl, "CHECK (Status IN ('active', 'inactive', 'pending'))")
+	})
+
+	t.Run("check_with_not_null", func(t *testing.T) {
+		c := Col("Price", TypeDecimal(10, 2)).NotNull().Check("Price > 0")
+		ddl := c.ddl(d)
+		assert.Contains(t, ddl, "NOT NULL")
+		assert.Contains(t, ddl, "CHECK (Price > 0)")
+	})
+
+	t.Run("check_postgres", func(t *testing.T) {
+		c := Col("Quantity", TypeInt()).NotNull().Check("Quantity >= 0")
+		ddl := c.ddl(chuck.PostgresDialect{})
+		assert.Contains(t, ddl, `"quantity" INTEGER NOT NULL CHECK (Quantity >= 0)`)
+	})
+
+	t.Run("check_sqlite", func(t *testing.T) {
+		c := Col("Quantity", TypeInt()).NotNull().Check("Quantity >= 0")
+		ddl := c.ddl(chuck.SQLiteDialect{})
+		assert.Contains(t, ddl, `"Quantity" INTEGER NOT NULL CHECK (Quantity >= 0)`)
+	})
+
+	t.Run("check_mssql", func(t *testing.T) {
+		c := Col("Quantity", TypeInt()).NotNull().Check("Quantity >= 0")
+		ddl := c.ddl(chuck.MSSQLDialect{})
+		assert.Contains(t, ddl, `[Quantity] INT NOT NULL CHECK (Quantity >= 0)`)
+	})
 }
 
 func TestTableFactories(t *testing.T) {

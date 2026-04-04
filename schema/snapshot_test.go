@@ -140,6 +140,44 @@ func TestSnapshotOnDeleteOnUpdate(t *testing.T) {
 	assert.Equal(t, "CASCADE", reqID.OnUpdate)
 }
 
+func TestSnapshotCheck(t *testing.T) {
+	table := NewTable("Products").
+		Columns(
+			AutoIncrCol("ID"),
+			Col("Price", TypeDecimal(10, 2)).NotNull().Check("Price > 0"),
+			Col("Status", TypeVarchar(20)).Check("Status IN ('active', 'draft')"),
+		)
+
+	t.Run("struct_fields", func(t *testing.T) {
+		snap := table.Snapshot(chuck.PostgresDialect{})
+
+		price := snap.Columns[1]
+		assert.Equal(t, "price", price.Name)
+		assert.Equal(t, "Price > 0", price.Check)
+
+		status := snap.Columns[2]
+		assert.Equal(t, "status", status.Name)
+		assert.Equal(t, "Status IN ('active', 'draft')", status.Check)
+	})
+
+	t.Run("json_serializable", func(t *testing.T) {
+		snap := table.Snapshot(chuck.SQLiteDialect{})
+		data, err := json.MarshalIndent(snap, "", "  ")
+		require.NoError(t, err)
+		assert.Contains(t, string(data), `"check":`)
+		// Verify the check field round-trips through JSON
+		var decoded TableSnapshot
+		require.NoError(t, json.Unmarshal(data, &decoded))
+		assert.Equal(t, "Price > 0", decoded.Columns[1].Check)
+	})
+
+	t.Run("snapshot_string", func(t *testing.T) {
+		s := table.SnapshotString(chuck.PostgresDialect{})
+		assert.Contains(t, s, "CHECK (Price > 0)")
+		assert.Contains(t, s, "CHECK (Status IN ('active', 'draft'))")
+	})
+}
+
 func TestSchemaSnapshot(t *testing.T) {
 	users := NewTable("Users").
 		Columns(AutoIncrCol("ID"))

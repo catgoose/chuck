@@ -53,6 +53,7 @@ type DDLWriter interface {
 	DropTableIfExists(table string) string
 	CreateIndexIfNotExists(indexName, table, columns string) string
 	InsertOrIgnore(table, columns, values string) string
+	Upsert(table, columns, values, conflictColumns, updateSet string) string
 	ReturningClause(columns string) string
 }
 

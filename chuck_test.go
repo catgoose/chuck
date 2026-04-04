@@ -187,6 +187,15 @@ func TestMSSQLDialect(t *testing.T) {
 		assert.Contains(t, stmt, "'Alice'")
 		assert.Contains(t, stmt, "END CATCH")
 	})
+
+	t.Run("Upsert", func(t *testing.T) {
+		stmt := d.Upsert("Users", "[Name], [Email]", "@Name, @Email", "[Email]", "[Name] = Source.[Name]")
+		assert.Contains(t, stmt, "MERGE [Users] AS Target")
+		assert.Contains(t, stmt, "USING (VALUES (@Name, @Email)) AS Source ([Name], [Email])")
+		assert.Contains(t, stmt, "ON Target.[Email] = Source.[Email]")
+		assert.Contains(t, stmt, "WHEN MATCHED THEN UPDATE SET [Name] = Source.[Name]")
+		assert.Contains(t, stmt, "WHEN NOT MATCHED THEN INSERT ([Name], [Email]) VALUES (@Name, @Email)")
+	})
 }
 
 func TestSQLiteDialect(t *testing.T) {
@@ -270,6 +279,11 @@ func TestSQLiteDialect(t *testing.T) {
 	t.Run("InsertOrIgnore", func(t *testing.T) {
 		stmt := d.InsertOrIgnore("Users", "Name, Email", "'Alice', 'alice@test.com'")
 		assert.Equal(t, `INSERT OR IGNORE INTO "Users" (Name, Email) VALUES ('Alice', 'alice@test.com')`, stmt)
+	})
+
+	t.Run("Upsert", func(t *testing.T) {
+		stmt := d.Upsert("Users", `"Name", "Email"`, "@Name, @Email", `"Email"`, `"Name" = EXCLUDED."Name"`)
+		assert.Equal(t, `INSERT INTO "Users" ("Name", "Email") VALUES (@Name, @Email) ON CONFLICT ("Email") DO UPDATE SET "Name" = EXCLUDED."Name"`, stmt)
 	})
 }
 
@@ -369,6 +383,11 @@ func TestPostgresDialect(t *testing.T) {
 		stmt := d.InsertOrIgnore("Users", "Name, Email", "'Alice', 'alice@test.com'")
 		assert.Equal(t, `INSERT INTO "Users" (Name, Email) VALUES ('Alice', 'alice@test.com') ON CONFLICT DO NOTHING`, stmt)
 	})
+
+	t.Run("Upsert", func(t *testing.T) {
+		stmt := d.Upsert("Users", `"Name", "Email"`, "@Name, @Email", `"Email"`, `"Name" = EXCLUDED."Name"`)
+		assert.Equal(t, `INSERT INTO "Users" ("Name", "Email") VALUES (@Name, @Email) ON CONFLICT ("Email") DO UPDATE SET "Name" = EXCLUDED."Name"`, stmt)
+	})
 }
 
 // TestDialectConsistency verifies cross-dialect invariants that all
@@ -414,6 +433,12 @@ func TestDialectConsistency(t *testing.T) {
 				assert.NotEmpty(t, d.ReturningClause("id"),
 					"dialect without SupportsLastInsertID or LastInsertIDQuery must support ReturningClause")
 			}
+		})
+
+		t.Run(name+"/upsert_contains_table_name", func(t *testing.T) {
+			table := "test_table"
+			stmt := d.Upsert(table, "col1, col2", "@col1, @col2", "col1", "col2 = EXCLUDED.col2")
+			assert.Contains(t, stmt, table)
 		})
 
 		t.Run(name+"/ddl_contains_table_name", func(t *testing.T) {

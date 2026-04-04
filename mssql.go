@@ -109,3 +109,21 @@ func (d MSSQLDialect) InsertOrIgnore(table, columns, values string) string {
 		d.QuoteIdentifier(table), columns, values,
 	)
 }
+
+func (d MSSQLDialect) Upsert(table, columns, values, conflictColumns, updateSet string) string {
+	qt := d.QuoteIdentifier(table)
+
+	// Build the ON clause: Target.key = Source.key for each conflict column
+	conflictParts := strings.Split(conflictColumns, ", ")
+	onParts := make([]string, len(conflictParts))
+	for i, col := range conflictParts {
+		col = strings.TrimSpace(col)
+		onParts[i] = fmt.Sprintf("Target.%s = Source.%s", col, col)
+	}
+	onClause := strings.Join(onParts, " AND ")
+
+	return fmt.Sprintf(
+		"MERGE %s AS Target USING (VALUES (%s)) AS Source (%s) ON %s WHEN MATCHED THEN UPDATE SET %s WHEN NOT MATCHED THEN INSERT (%s) VALUES (%s);",
+		qt, values, columns, onClause, updateSet, columns, values,
+	)
+}

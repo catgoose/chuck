@@ -23,7 +23,13 @@ import (
 //
 //	postgres://user:pass@host:5432/dbname?sslmode=disable
 //	sqlite:///path/to/db.sqlite  or  sqlite:///:memory:
+//	sqlite://:memory:            or  sqlite3://:memory:
 //	sqlserver://user:pass@host:1433?database=dbname
+//
+// For SQLite, both two-slash (sqlite://:memory:) and three-slash
+// (sqlite:///:memory:, sqlite:///path/to/db) forms are accepted. The
+// three-slash form follows the standard URI convention where the path
+// begins after the authority component.
 //
 // Returns the raw *sql.DB and the matching Dialect for SQL generation.
 func OpenURL(ctx context.Context, dsn string) (*sql.DB, Dialect, error) {
@@ -33,6 +39,15 @@ func OpenURL(ctx context.Context, dsn string) (*sql.DB, Dialect, error) {
 			path := strings.TrimPrefix(dsn, prefix)
 			if path == "" {
 				return nil, nil, fmt.Errorf("empty sqlite path in URL %q", dsn)
+			}
+			// Handle three-slash form: sqlite:///:memory:
+			// After stripping "sqlite://", "/:memory:" remains. The leading
+			// slash is the URI path separator (empty authority), not part of
+			// the SQLite identifier, so strip it for special names like :memory:.
+			// Absolute file paths (e.g. sqlite:///tmp/db → /tmp/db) keep
+			// their leading slash because it is part of the filesystem path.
+			if strings.HasPrefix(path, "/:memory:") {
+				path = path[1:]
 			}
 			return openSQLiteFromURL(ctx, path)
 		}

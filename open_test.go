@@ -127,6 +127,26 @@ func TestOpenURLSQLite3Prefix(t *testing.T) {
 	assert.NoError(t, db.PingContext(ctx))
 }
 
+func TestOpenURLSQLiteThreeSlashMemory(t *testing.T) {
+	ctx := context.Background()
+	db, d, err := OpenURL(ctx, "sqlite:///:memory:")
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	assert.Equal(t, SQLite, d.Engine())
+	assert.NoError(t, db.PingContext(ctx))
+}
+
+func TestOpenURLSQLite3ThreeSlashMemory(t *testing.T) {
+	ctx := context.Background()
+	db, d, err := OpenURL(ctx, "sqlite3:///:memory:")
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	assert.Equal(t, SQLite, d.Engine())
+	assert.NoError(t, db.PingContext(ctx))
+}
+
 func TestOpenURLSQLiteEmptyPath(t *testing.T) {
 	ctx := context.Background()
 	_, _, err := OpenURL(ctx, "sqlite://")

@@ -72,6 +72,22 @@ func ValidateSchema(ctx context.Context, db *sql.DB, d chuck.Dialect, td *TableD
 				Message: fmt.Sprintf("nullability mismatch: declared NOT NULL=%v, live nullable=%v", dc.NotNull, lc.Nullable),
 			})
 		}
+
+		if normalizeType(dc.Type) != normalizeType(lc.Type) {
+			errs = append(errs, SchemaError{
+				Table:  tableName,
+				Column: dc.Name,
+				Message: fmt.Sprintf("type mismatch: declared %q, live %q", dc.Type, lc.Type),
+			})
+		}
+
+		if normalizeDefault(dc.Default) != normalizeDefault(lc.Default) {
+			errs = append(errs, SchemaError{
+				Table:  tableName,
+				Column: dc.Name,
+				Message: fmt.Sprintf("default mismatch: declared %q, live %q", dc.Default, lc.Default),
+			})
+		}
 	}
 
 	// Check for extra columns in live that aren't declared

@@ -87,6 +87,54 @@ func TestValidateSchema(t *testing.T) {
 		assert.True(t, found, "expected nullability mismatch for Status, got: %v", errs)
 	})
 
+	t.Run("type_mismatch", func(t *testing.T) {
+		// Declare Name as INTEGER, but it's TEXT in the DB
+		typeMismatch := NewTable("Items").
+			Columns(
+				AutoIncrCol("ID"),
+				Col("Name", TypeInt()).NotNull(),
+				Col("Status", TypeVarchar(50)).NotNull().Default("'active'"),
+			)
+
+		errs := ValidateSchema(ctx, db, d, typeMismatch)
+		require.NotNil(t, errs)
+
+		var found bool
+		for _, e := range errs {
+			if e.Column == "Name" && strings.Contains(e.Message, "type mismatch") {
+				found = true
+			}
+		}
+		assert.True(t, found, "expected type mismatch for Name, got: %v", errs)
+	})
+
+	t.Run("default_mismatch", func(t *testing.T) {
+		// Declare Status with a different default than in DB
+		defaultMismatch := NewTable("Items").
+			Columns(
+				AutoIncrCol("ID"),
+				Col("Name", TypeString(255)).NotNull(),
+				Col("Status", TypeVarchar(50)).NotNull().Default("'pending'"),
+			)
+
+		errs := ValidateSchema(ctx, db, d, defaultMismatch)
+		require.NotNil(t, errs)
+
+		var found bool
+		for _, e := range errs {
+			if e.Column == "Status" && strings.Contains(e.Message, "default mismatch") {
+				found = true
+			}
+		}
+		assert.True(t, found, "expected default mismatch for Status, got: %v", errs)
+	})
+
+	t.Run("autoincr_no_false_positive", func(t *testing.T) {
+		// Auto-increment columns should not cause a false type mismatch
+		errs := ValidateSchema(ctx, db, d, table)
+		assert.Nil(t, errs, "expected no errors for matching schema, got: %v", errs)
+	})
+
 	t.Run("extra_live_column", func(t *testing.T) {
 		// Declare fewer columns than exist in DB
 		fewer := NewTable("Items").

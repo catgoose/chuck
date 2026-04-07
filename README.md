@@ -369,7 +369,7 @@ data, _ := json.MarshalIndent(snap, "", "  ")
 // Human-readable text -- for side-by-side diffing
 fmt.Println(TasksTable.SnapshotString(dialect))
 // TABLE tasks
-//   id                   SERIAL PRIMARY KEY PRIMARY KEY AUTO INCREMENT NOT NULL [immutable]
+//   id                   SERIAL PRIMARY KEY NOT NULL [immutable]
 //   title                TEXT NOT NULL
 //   description          TEXT
 //   ...

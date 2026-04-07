@@ -63,7 +63,7 @@ func InsertInto(table string, cols ...string) string {
 
 // ColumnsQ joins column names into a comma-separated list with dialect quoting.
 //
-//	ColumnsQ(d, "ID", "Name", "Email") => `"ID", "Name", "Email"` (Postgres/SQLite)
+//	ColumnsQ(d, "ID", "Name", "Email") => `"id", "name", "email"` (Postgres) or `"ID", "Name", "Email"` (SQLite)
 func ColumnsQ(d chuck.Identifier, cols ...string) string {
 	quoted := make([]string, len(cols))
 	for i, c := range cols {
@@ -74,7 +74,7 @@ func ColumnsQ(d chuck.Identifier, cols ...string) string {
 
 // SetClauseQ builds a SET fragment for UPDATE statements with dialect quoting.
 //
-//	SetClauseQ(d, "Name", "Email") => `"Name" = @Name, "Email" = @Email` (Postgres/SQLite)
+//	SetClauseQ(d, "Name", "Email") => `"name" = @Name, "email" = @Email` (Postgres) or `"Name" = @Name, "Email" = @Email` (SQLite)
 func SetClauseQ(d chuck.Identifier, cols ...string) string {
 	parts := make([]string, len(cols))
 	for i, c := range cols {
@@ -86,7 +86,8 @@ func SetClauseQ(d chuck.Identifier, cols ...string) string {
 // InsertIntoQ builds a full INSERT INTO … VALUES … statement with dialect quoting.
 //
 //	InsertIntoQ(d, "Users", "Name", "Email") =>
-//	  `INSERT INTO "Users" ("Name", "Email") VALUES (@Name, @Email)` (Postgres/SQLite)
+//	  `INSERT INTO "users" ("name", "email") VALUES (@Name, @Email)` (Postgres)
+//	  `INSERT INTO "Users" ("Name", "Email") VALUES (@Name, @Email)` (SQLite)
 func InsertIntoQ(d chuck.Identifier, table string, cols ...string) string {
 	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 		d.QuoteIdentifier(d.NormalizeIdentifier(table)), ColumnsQ(d, cols...), Placeholders(cols...))

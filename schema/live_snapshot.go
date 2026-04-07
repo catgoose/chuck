@@ -83,7 +83,7 @@ func queryColumns(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName st
 	case chuck.SQLite:
 		query = `SELECT name, type, CASE WHEN "notnull" = 1 OR pk = 1 THEN 'NO' ELSE 'YES' END AS nullable, COALESCE(dflt_value, '') AS dflt FROM pragma_table_info(?)`
 	case chuck.Postgres:
-		query = `SELECT c.column_name, UPPER(format_type(a.atttypid, a.atttypmod)), c.is_nullable, COALESCE(c.column_default, '') FROM information_schema.columns c JOIN pg_attribute a ON a.attname = c.column_name JOIN pg_class t ON t.relname = c.table_name AND t.oid = a.attrelid WHERE c.table_schema = 'public' AND c.table_name = $1 AND a.attnum > 0 AND NOT a.attisdropped ORDER BY c.ordinal_position`
+		query = postgresColumnQuery
 	case chuck.MSSQL:
 		query = `SELECT COLUMN_NAME, UPPER(DATA_TYPE), IS_NULLABLE, COALESCE(COLUMN_DEFAULT, '') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @p1 ORDER BY ORDINAL_POSITION`
 	default:
@@ -207,20 +207,7 @@ func extractSQLiteWhere(createSQL string) string {
 }
 
 func queryIndexesPostgres(ctx context.Context, db *sql.DB, tableName string) ([]LiveIndexSnapshot, error) {
-	query := `
-		SELECT
-			i.relname AS index_name,
-			ix.indisunique,
-			COALESCE(pg_get_expr(ix.indpred, ix.indrelid), '') AS predicate,
-			array_to_string(ARRAY(
-				SELECT a.attname
-				FROM unnest(ix.indkey) k
-				JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k
-			), ',') AS columns
-		FROM pg_index ix
-		JOIN pg_class t ON t.oid = ix.indrelid
-		JOIN pg_class i ON i.oid = ix.indexrelid
-		WHERE t.relname = $1 AND NOT ix.indisprimary`
+	query := postgresIndexQuery
 
 	rows, err := db.QueryContext(ctx, query, tableName)
 	if err != nil {
@@ -247,6 +234,28 @@ func queryIndexesPostgres(ctx context.Context, db *sql.DB, tableName string) ([]
 	}
 	return indexes, rows.Err()
 }
+
+// postgresColumnQuery is the query used to retrieve column metadata from Postgres.
+// Exported at package level for testability.
+var postgresColumnQuery = `SELECT c.column_name, UPPER(format_type(a.atttypid, a.atttypmod)), c.is_nullable, COALESCE(c.column_default, '') FROM information_schema.columns c JOIN pg_attribute a ON a.attname = c.column_name JOIN pg_class t ON t.relname = c.table_name AND t.oid = a.attrelid JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public' WHERE c.table_schema = 'public' AND c.table_name = $1 AND a.attnum > 0 AND NOT a.attisdropped ORDER BY c.ordinal_position`
+
+// postgresIndexQuery is the query used to retrieve index metadata from Postgres.
+// Exported at package level for testability.
+var postgresIndexQuery = `
+		SELECT
+			i.relname AS index_name,
+			ix.indisunique,
+			COALESCE(pg_get_expr(ix.indpred, ix.indrelid), '') AS predicate,
+			array_to_string(ARRAY(
+				SELECT a.attname
+				FROM unnest(ix.indkey) k
+				JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k
+			), ',') AS columns
+		FROM pg_index ix
+		JOIN pg_class t ON t.oid = ix.indrelid
+		JOIN pg_class i ON i.oid = ix.indexrelid
+		JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+		WHERE t.relname = $1 AND NOT ix.indisprimary`
 
 // mssqlIndexQuery is the query used to retrieve index metadata from MSSQL.
 // Exported at package level for testability.

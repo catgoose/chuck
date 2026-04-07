@@ -248,25 +248,29 @@ func queryIndexesPostgres(ctx context.Context, db *sql.DB, tableName string) ([]
 	return indexes, rows.Err()
 }
 
-func queryIndexesMSSQL(ctx context.Context, db *sql.DB, tableName string) ([]LiveIndexSnapshot, error) {
-	query := `
-		SELECT
-			si.name,
-			si.is_unique,
-			COALESCE(si.filter_definition, ''),
-			STUFF((
-				SELECT ', ' + sc.name
-				FROM sys.index_columns ic
-				JOIN sys.columns sc ON sc.object_id = ic.object_id AND sc.column_id = ic.column_id
-				WHERE ic.object_id = si.object_id AND ic.index_id = si.index_id
-				FOR XML PATH('')
-			), 1, 2, '')
-		FROM sys.indexes si
-		WHERE si.object_id = OBJECT_ID(@p1)
-		AND si.is_primary_key = 0
-		AND si.name IS NOT NULL`
+// mssqlIndexQuery is the query used to retrieve index metadata from MSSQL.
+// Exported at package level for testability.
+var mssqlIndexQuery = `
+	SELECT
+		si.name,
+		si.is_unique,
+		COALESCE(si.filter_definition, ''),
+		STUFF((
+			SELECT ', ' + sc.name
+			FROM sys.index_columns ic
+			JOIN sys.columns sc ON sc.object_id = ic.object_id AND sc.column_id = ic.column_id
+			WHERE ic.object_id = si.object_id AND ic.index_id = si.index_id
+			AND ic.is_included_column = 0
+			ORDER BY ic.key_ordinal
+			FOR XML PATH('')
+		), 1, 2, '')
+	FROM sys.indexes si
+	WHERE si.object_id = OBJECT_ID(@p1)
+	AND si.is_primary_key = 0
+	AND si.name IS NOT NULL`
 
-	rows, err := db.QueryContext(ctx, query, tableName)
+func queryIndexesMSSQL(ctx context.Context, db *sql.DB, tableName string) ([]LiveIndexSnapshot, error) {
+	rows, err := db.QueryContext(ctx, mssqlIndexQuery, tableName)
 	if err != nil {
 		return nil, err
 	}

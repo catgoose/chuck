@@ -333,6 +333,20 @@ func TestLiveSnapshotPartialIndex(t *testing.T) {
 	assert.Equal(t, "Status = 'open'", snap.Indexes[0].Where)
 }
 
+func TestMSSQLIndexQueryExcludesIncludedColumns(t *testing.T) {
+	// The MSSQL index query must filter out included (non-key) columns
+	// so that only key columns appear in the column list.
+	assert.Contains(t, mssqlIndexQuery, "ic.is_included_column = 0",
+		"MSSQL index query should filter out included columns")
+}
+
+func TestMSSQLIndexQueryOrdersByKeyOrdinal(t *testing.T) {
+	// The MSSQL index query must order by key_ordinal to preserve
+	// the correct column ordering for multi-column indexes.
+	assert.Contains(t, mssqlIndexQuery, "ORDER BY ic.key_ordinal",
+		"MSSQL index query should order by key_ordinal")
+}
+
 func TestLiveSnapshotCompareWithDeclared(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)

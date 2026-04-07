@@ -25,7 +25,7 @@ func ExampleNewTable() {
 	fmt.Print(tasks.SnapshotString(d))
 	// Output:
 	// TABLE Tasks
-	//   ID                   INTEGER PRIMARY KEY AUTOINCREMENT PRIMARY KEY AUTO INCREMENT NOT NULL [immutable]
+	//   ID                   INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL [immutable]
 	//   Title                TEXT NOT NULL
 	//   Description          TEXT
 	//   AssigneeID           INTEGER REFERENCES Users(ID) ON DELETE SET NULL
@@ -77,7 +77,7 @@ func ExampleNewTable_foreignKeys() {
 	fmt.Print(comments.SnapshotString(pg))
 	// Output:
 	// TABLE comments
-	//   id                   SERIAL PRIMARY KEY PRIMARY KEY AUTO INCREMENT NOT NULL [immutable]
+	//   id                   SERIAL PRIMARY KEY NOT NULL [immutable]
 	//   task_id              INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE
 	//   author_id            INTEGER REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE
 	//   body                 TEXT NOT NULL
@@ -161,7 +161,7 @@ func ExampleNewLookupTable() {
 	// Output:
 	// Columns: ID, Category, Label
 	// TABLE Options
-	//   ID                   INTEGER PRIMARY KEY AUTOINCREMENT PRIMARY KEY AUTO INCREMENT NOT NULL [immutable]
+	//   ID                   INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL [immutable]
 	//   Category             TEXT NOT NULL
 	//   Label                TEXT NOT NULL
 	//   INDEX idx_options_category ON (Category)
@@ -197,7 +197,7 @@ func ExampleNewConfigTable() {
 	// Output:
 	// Columns: ID, Key, Value
 	// TABLE Settings
-	//   ID                   INTEGER PRIMARY KEY AUTOINCREMENT PRIMARY KEY AUTO INCREMENT NOT NULL [immutable]
+	//   ID                   INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL [immutable]
 	//   Key                  TEXT NOT NULL UNIQUE
 	//   Value                TEXT
 	//   INDEX idx_settings_key ON (Key)
@@ -220,7 +220,7 @@ func ExampleNewEventTable() {
 	// Columns: ID, EventType, ActorID, Payload, CreatedAt
 	// Mutable count: 0
 	// TABLE AuditLog
-	//   ID                   INTEGER PRIMARY KEY AUTOINCREMENT PRIMARY KEY AUTO INCREMENT NOT NULL [immutable]
+	//   ID                   INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL [immutable]
 	//   EventType            TEXT NOT NULL [immutable]
 	//   ActorID              INTEGER NOT NULL [immutable]
 	//   Payload              TEXT [immutable]
@@ -238,7 +238,7 @@ func ExampleNewQueueTable() {
 	// Output:
 	// Columns: ID, Payload, Status, RetryCount, ScheduledAt, ProcessedAt, CreatedAt
 	// TABLE Jobs
-	//   ID                   INTEGER PRIMARY KEY AUTOINCREMENT PRIMARY KEY AUTO INCREMENT NOT NULL [immutable]
+	//   ID                   INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL [immutable]
 	//   Payload              TEXT NOT NULL
 	//   Status               TEXT NOT NULL DEFAULT 'pending'
 	//   RetryCount           INTEGER NOT NULL DEFAULT 0
@@ -329,7 +329,7 @@ func ExampleTableDef_Snapshot() {
 	fmt.Print(tasks.SnapshotString(d))
 	// Output:
 	// TABLE tasks
-	//   id                   SERIAL PRIMARY KEY PRIMARY KEY AUTO INCREMENT NOT NULL [immutable]
+	//   id                   SERIAL PRIMARY KEY NOT NULL [immutable]
 	//   title                TEXT NOT NULL
 	//   deleted_at           TIMESTAMPTZ
 	//   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW() [immutable]
@@ -375,11 +375,11 @@ func ExampleSchemaSnapshotString() {
 	fmt.Print(schema.SchemaSnapshotString(d, users, tasks))
 	// Output:
 	// TABLE Users
-	//   ID                   INTEGER PRIMARY KEY AUTOINCREMENT PRIMARY KEY AUTO INCREMENT NOT NULL [immutable]
+	//   ID                   INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL [immutable]
 	//   Email                TEXT NOT NULL UNIQUE
 	//
 	// TABLE Tasks
-	//   ID                   INTEGER PRIMARY KEY AUTOINCREMENT PRIMARY KEY AUTO INCREMENT NOT NULL [immutable]
+	//   ID                   INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL [immutable]
 	//   Title                TEXT NOT NULL
 	//   UserID               INTEGER REFERENCES Users(ID)
 }

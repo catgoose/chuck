@@ -113,10 +113,11 @@ func (t *TableDef) SnapshotString(d chuck.Dialect) string {
 	for _, c := range snap.Columns {
 		var parts []string
 		parts = append(parts, c.Type)
-		if c.PrimaryKey {
+		upperType := strings.ToUpper(c.Type)
+		if c.PrimaryKey && !strings.Contains(upperType, "PRIMARY KEY") {
 			parts = append(parts, "PRIMARY KEY")
 		}
-		if c.AutoIncr {
+		if c.AutoIncr && !strings.Contains(upperType, "AUTOINCREMENT") && !strings.Contains(upperType, "AUTO_INCREMENT") && !strings.Contains(upperType, "SERIAL") {
 			parts = append(parts, "AUTO INCREMENT")
 		}
 		if c.NotNull {

@@ -328,6 +328,48 @@ func TestSnapshotMixedIndexes(t *testing.T) {
 	assert.Equal(t, "DeletedAt IS NULL", snap.Indexes[2].Where)
 }
 
+func TestSnapshotStringNoDuplicatePKAutoIncr(t *testing.T) {
+	autoIncr := NewTable("Items").
+		Columns(AutoIncrCol("ID"), Col("Name", TypeString(255)))
+
+	uuidPK := NewTable("Tokens").
+		Columns(UUIDPKCol("ID"), Col("Scope", TypeVarchar(100)))
+
+	t.Run("sqlite_autoincr", func(t *testing.T) {
+		s := autoIncr.SnapshotString(chuck.SQLiteDialect{})
+		// Should contain PRIMARY KEY from type, not duplicated
+		assert.Contains(t, s, "INTEGER PRIMARY KEY AUTOINCREMENT")
+		assert.NotContains(t, s, "PRIMARY KEY AUTOINCREMENT PRIMARY KEY")
+		assert.NotContains(t, s, "AUTO INCREMENT")
+	})
+
+	t.Run("postgres_autoincr", func(t *testing.T) {
+		s := autoIncr.SnapshotString(chuck.PostgresDialect{})
+		assert.Contains(t, s, "SERIAL PRIMARY KEY")
+		assert.NotContains(t, s, "PRIMARY KEY PRIMARY KEY")
+		assert.NotContains(t, s, "AUTO INCREMENT")
+	})
+
+	t.Run("mssql_autoincr", func(t *testing.T) {
+		s := autoIncr.SnapshotString(chuck.MSSQLDialect{})
+		assert.Contains(t, s, "PRIMARY KEY")
+		assert.NotContains(t, s, "PRIMARY KEY PRIMARY KEY")
+	})
+
+	t.Run("postgres_uuid_pk", func(t *testing.T) {
+		s := uuidPK.SnapshotString(chuck.PostgresDialect{})
+		assert.Contains(t, s, "UUID PRIMARY KEY")
+		assert.NotContains(t, s, "PRIMARY KEY PRIMARY KEY")
+		assert.NotContains(t, s, "PRIMARY KEY DEFAULT gen_random_uuid() PRIMARY KEY")
+	})
+
+	t.Run("sqlite_uuid_pk", func(t *testing.T) {
+		s := uuidPK.SnapshotString(chuck.SQLiteDialect{})
+		assert.Contains(t, s, "PRIMARY KEY")
+		assert.NotContains(t, s, "PRIMARY KEY PRIMARY KEY")
+	})
+}
+
 func TestSchemaSnapshot(t *testing.T) {
 	users := NewTable("Users").
 		Columns(AutoIncrCol("ID"))

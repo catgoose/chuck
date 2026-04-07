@@ -241,14 +241,23 @@ func normalizeType(s string) string {
 
 // normalizeDefault normalizes a default value for comparison. Different databases
 // may wrap defaults differently (e.g., parentheses, quotes). This trims whitespace,
-// removes outer parentheses, and lowercases to reduce false positives.
+// removes outer parentheses, and lowercases SQL keywords/functions while preserving
+// the case of string literal contents inside single quotes.
 func normalizeDefault(s string) string {
 	s = strings.TrimSpace(s)
 	// Strip outer parentheses (common in some databases, e.g., SQLite wraps defaults)
 	for len(s) >= 2 && s[0] == '(' && s[len(s)-1] == ')' {
 		s = s[1 : len(s)-1]
 	}
-	return strings.ToLower(s)
+	// Split on single quotes to selectively lowercase only non-quoted segments.
+	// Even-indexed parts are outside quotes; odd-indexed parts are inside quotes.
+	parts := strings.Split(s, "'")
+	for i := range parts {
+		if i%2 == 0 {
+			parts[i] = strings.ToLower(parts[i])
+		}
+	}
+	return strings.Join(parts, "'")
 }
 
 // WriteDiffsJSON writes multiple diffs as a JSON array to a file path.

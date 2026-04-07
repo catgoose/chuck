@@ -224,6 +224,69 @@ func TestDiffSchema(t *testing.T) {
 	})
 }
 
+func TestNormalizeDefault(t *testing.T) {
+	tests := []struct {
+		name   string
+		a, b   string
+		expect bool // true means they should be equal after normalization
+	}{
+		{
+			name:   "case_sensitive_string_literal_drift",
+			a:      "'Admin'",
+			b:      "'admin'",
+			expect: false,
+		},
+		{
+			name:   "paren_stripping",
+			a:      "(1)",
+			b:      "1",
+			expect: true,
+		},
+		{
+			name:   "keyword_case_insensitive",
+			a:      "CURRENT_TIMESTAMP",
+			b:      "current_timestamp",
+			expect: true,
+		},
+		{
+			name:   "identical_string_literal_no_false_drift",
+			a:      "'Hello World'",
+			b:      "'Hello World'",
+			expect: true,
+		},
+		{
+			name:   "nested_parens_with_string_literal",
+			a:      "(('Active'))",
+			b:      "'Active'",
+			expect: true,
+		},
+		{
+			name:   "mixed_keyword_and_literal",
+			a:      "DEFAULT 'Foo'",
+			b:      "default 'Foo'",
+			expect: true,
+		},
+		{
+			name:   "mixed_keyword_and_literal_case_drift",
+			a:      "DEFAULT 'Foo'",
+			b:      "default 'foo'",
+			expect: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			na := normalizeDefault(tt.a)
+			nb := normalizeDefault(tt.b)
+			if tt.expect {
+				assert.Equal(t, na, nb, "expected %q and %q to normalize equally", tt.a, tt.b)
+			} else {
+				assert.NotEqual(t, na, nb, "expected %q and %q to normalize differently", tt.a, tt.b)
+			}
+		})
+	}
+}
+
 func TestDiffSchemaIndexPropertyMismatch(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)

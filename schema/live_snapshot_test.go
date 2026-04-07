@@ -333,6 +333,28 @@ func TestLiveSnapshotPartialIndex(t *testing.T) {
 	assert.Equal(t, "Status = 'open'", snap.Indexes[0].Where)
 }
 
+func TestPostgresColumnQueryScopesToPublicSchema(t *testing.T) {
+	// The Postgres column query must join pg_namespace to constrain
+	// pg_class lookups to the public schema, preventing cross-schema matches.
+	assert.Contains(t, postgresColumnQuery, "pg_namespace",
+		"Postgres column query should reference pg_namespace")
+	assert.Contains(t, postgresColumnQuery, "n.oid = t.relnamespace",
+		"Postgres column query should join pg_namespace on relnamespace")
+	assert.Contains(t, postgresColumnQuery, "n.nspname = 'public'",
+		"Postgres column query should constrain to public schema")
+}
+
+func TestPostgresIndexQueryScopesToPublicSchema(t *testing.T) {
+	// The Postgres index query must join pg_namespace to constrain
+	// pg_class lookups to the public schema, preventing cross-schema matches.
+	assert.Contains(t, postgresIndexQuery, "pg_namespace",
+		"Postgres index query should reference pg_namespace")
+	assert.Contains(t, postgresIndexQuery, "n.oid = t.relnamespace",
+		"Postgres index query should join pg_namespace on relnamespace")
+	assert.Contains(t, postgresIndexQuery, "n.nspname = 'public'",
+		"Postgres index query should constrain to public schema")
+}
+
 func TestMSSQLIndexQueryExcludesIncludedColumns(t *testing.T) {
 	// The MSSQL index query must filter out included (non-key) columns
 	// so that only key columns appear in the column list.

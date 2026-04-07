@@ -138,7 +138,7 @@ func (c ColumnDef) NotNull() ColumnDef { c.notNull = true; return c }
 // Unique marks the column with a UNIQUE constraint.
 func (c ColumnDef) Unique() ColumnDef { c.unique = true; return c }
 
-// PrimaryKey marks the column as a primary key.
+// PrimaryKey marks the column as a primary key, adding PRIMARY KEY to the generated DDL.
 func (c ColumnDef) PrimaryKey() ColumnDef { c.pk = true; return c }
 
 // Default sets a literal DEFAULT expression (e.g. "'active'").
@@ -177,8 +177,13 @@ func (c ColumnDef) ddl(d chuck.Dialect) string {
 	var parts []string
 
 	parts = append(parts, d.QuoteIdentifier(d.NormalizeIdentifier(c.name)))
-	parts = append(parts, c.typeFn(d))
 
+	typeStr := c.typeFn(d)
+	parts = append(parts, typeStr)
+
+	if c.pk && !strings.Contains(typeStr, "PRIMARY KEY") {
+		parts = append(parts, "PRIMARY KEY")
+	}
 	if c.notNull {
 		parts = append(parts, "NOT NULL")
 	}

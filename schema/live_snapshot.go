@@ -127,7 +127,7 @@ func queryIndexes(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName st
 
 func queryIndexesSQLite(ctx context.Context, db *sql.DB, tableName string) ([]LiveIndexSnapshot, error) {
 	// pragma_index_list returns: seq, name, unique, origin, partial
-	listQuery := `SELECT name, "unique", partial FROM pragma_index_list(?) WHERE origin != 'pk'`
+	listQuery := `SELECT name, "unique", partial FROM pragma_index_list(?) WHERE origin = 'c'`
 	rows, err := db.QueryContext(ctx, listQuery, tableName)
 	if err != nil {
 		return nil, err

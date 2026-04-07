@@ -7,7 +7,7 @@
   - [Philosophy](#philosophy)
   - [Install](#install)
   - [Schema as Code](#schema-as-code)
-    - [UUID Primary Keys](#uuid-primary-keys)
+    - [Primary Keys](#primary-keys)
     - [Foreign Key References](#foreign-key-references)
     - [CHECK Constraints](#check-constraints)
     - [Traits](#traits)
@@ -21,6 +21,7 @@
     - [Schema Validation](#schema-validation)
     - [Schema Ensure](#schema-ensure)
       - [Structured Diffs](#structured-diffs)
+      - [Drift Detection Coverage](#drift-detection-coverage)
   - [Dialect Interface](#dialect-interface)
     - [Column Type Methods](#column-type-methods)
     - [Identifier Normalization](#identifier-normalization)
@@ -101,17 +102,17 @@ Three dialects. Three DDL strings. Six column lists. Add a field? Update them al
 
 ```go
 var TasksTable = schema.NewTable("Tasks").
-	Columns(
-		schema.AutoIncrCol("ID"),
-		schema.Col("Title", schema.TypeString(255)).NotNull(),
-		schema.Col("Description", schema.TypeText()),
-	).
-	WithTimestamps().
-	WithSoftDelete()
+    Columns(
+        schema.AutoIncrCol("ID"),
+        schema.Col("Title", schema.TypeString(255)).NotNull(),
+        schema.Col("Description", schema.TypeText()),
+    ).
+    WithTimestamps().
+    WithSoftDelete()
 
 // Generate DDL for any dialect
 for _, stmt := range TasksTable.CreateIfNotExistsSQL(dialect) {
-	db.Exec(stmt)
+    db.Exec(stmt)
 }
 // Column lists come free: TasksTable.InsertColumnsFor(dialect)
 ```
@@ -196,14 +197,31 @@ for _, stmt := range stmts {
 }
 ```
 
-### UUID Primary Keys
+### Primary Keys
 
-For Postgres apps using UUID primary keys:
+Auto-incrementing primary keys use a dedicated constructor:
 
 ```go
-schema.UUIDPKCol("id")
-// Postgres: id UUID PRIMARY KEY DEFAULT gen_random_uuid()
-// SQLite:   id TEXT PRIMARY KEY
+schema.AutoIncrCol("ID")
+// Postgres: "id" SERIAL PRIMARY KEY
+// SQLite:   "ID" INTEGER PRIMARY KEY AUTOINCREMENT
+// MSSQL:    [ID] INT PRIMARY KEY IDENTITY(1,1)
+```
+
+UUID primary keys for Postgres apps:
+
+```go
+schema.UUIDPKCol("ID")
+// Postgres: "id" UUID PRIMARY KEY DEFAULT gen_random_uuid()
+// SQLite:   "ID" TEXT PRIMARY KEY
+// MSSQL:    [ID] UNIQUEIDENTIFIER PRIMARY KEY
+```
+
+For arbitrary primary keys, chain `.PrimaryKey()` on any column. This affects both the snapshot metadata and the generated DDL:
+
+```go
+schema.Col("Code", schema.TypeVarchar(10)).PrimaryKey().NotNull()
+// Postgres: "code" VARCHAR(10) PRIMARY KEY NOT NULL
 ```
 
 ### Foreign Key References
@@ -212,10 +230,10 @@ schema.UUIDPKCol("id")
 
 ```go
 schema.Col("TaskID", schema.TypeInt()).NotNull().
-	References("Tasks", "ID").OnDelete("CASCADE")
+    References("Tasks", "ID").OnDelete("CASCADE")
 
 schema.Col("AssigneeID", schema.TypeInt()).
-	References("Users", "ID").OnDelete("SET NULL").OnUpdate("CASCADE")
+    References("Users", "ID").OnDelete("SET NULL").OnUpdate("CASCADE")
 ```
 
 Supported actions: `CASCADE`, `SET NULL`, `SET DEFAULT`, `RESTRICT`, `NO ACTION`.
@@ -252,6 +270,8 @@ Traits add columns and behavior in one call. They're composable -- use as many o
 | `WithExpiry()`        | `ExpiresAt`                           | Expiration timestamp               |
 
 Traits use PascalCase column names internally. For Postgres, these are automatically normalized to snake_case (`CreatedAt` becomes `created_at`). SQLite and MSSQL preserve the original casing.
+
+Each trait has a corresponding `ColumnDefs()` function (e.g., `TimestampColumnDefs()`, `SoftDeleteColumnDefs()`) if you need the column definitions without attaching them to a table.
 
 ### Table Factories
 
@@ -309,18 +329,18 @@ Declare initial rows as part of the schema. Seed is idempotent via the dialect's
 
 ```go
 var StatusTable = schema.NewTable("Statuses").
-	Columns(
-		schema.AutoIncrCol("ID"),
-		schema.Col("Name", schema.TypeVarchar(50)).NotNull().Unique(),
-		schema.Col("Active", schema.TypeBool()).NotNull(),
-	).
-	WithSeedValues(
-		schema.SeedValues{"Name": "active", "Active": true},
-		schema.SeedValues{"Name": "archived", "Active": false},
-	)
+    Columns(
+        schema.AutoIncrCol("ID"),
+        schema.Col("Name", schema.TypeVarchar(50)).NotNull().Unique(),
+        schema.Col("Active", schema.TypeBool()).NotNull(),
+    ).
+    WithSeedValues(
+        schema.SeedValues{"Name": "active", "Active": true},
+        schema.SeedValues{"Name": "archived", "Active": false},
+    )
 
 for _, stmt := range StatusTable.SeedSQL(dialect) {
-	db.Exec(stmt)
+    db.Exec(stmt)
 }
 ```
 
@@ -383,17 +403,18 @@ fmt.Println(schema.SchemaSnapshotString(dialect, UsersTable, TasksTable, StatusT
 Query a live database to get its actual schema, then compare against your declared schema:
 
 ```go
-// Read what the database actually has
+// Read what the database actually has -- single table
 live, err := schema.LiveSnapshot(ctx, db, dialect, "Tasks")
 
-// Read what your code declares
-declared := TasksTable.Snapshot(dialect)
+// Or read multiple tables at once
+lives, err := schema.LiveSchemaSnapshot(ctx, db, dialect, "Tasks", "Users", "Statuses")
 
-// Compare -- column names, types, nullability
+// Compare declared vs live
+declared := TasksTable.Snapshot(dialect)
 for i, dc := range declared.Columns {
-	if dc.Name != live.Columns[i].Name {
-		log.Printf("column mismatch at position %d: declared %s, live %s", i, dc.Name, live.Columns[i].Name)
-	}
+    if dc.Name != live.Columns[i].Name {
+        log.Printf("column mismatch at position %d: declared %s, live %s", i, dc.Name, live.Columns[i].Name)
+    }
 }
 
 // Or compare the text representations side by side
@@ -403,33 +424,39 @@ fmt.Println("=== Live ===")
 fmt.Println(live.String())
 ```
 
-`LiveSnapshot` returns column names, types, nullability, defaults, and indexes (including each index's columns, uniqueness, and WHERE clause).
+`LiveSnapshot` returns column names, types, nullability, defaults, and indexes (including each index's columns, uniqueness, and WHERE clause). Postgres introspection uses `format_type()` for full type fidelity and scopes all queries to the `public` schema via `pg_namespace`.
 
 ### Schema Validation
 
-`ValidateSchema` compares a declared table definition against the live database. It normalizes column and table names for the dialect automatically -- PascalCase declarations match the snake_case columns that Postgres DDL creates.
+> THE FOOL asked: "What is out-of-band information?" Out-of-band information is THE CONSPIRACY. It is the hidden knowledge. The secret handshake.
+>
+> -- The Wisdom of the Uniform Interface
+
+Schema drift is out-of-band information. Your application thinks the table looks one way; the database knows otherwise. `ValidateSchema` eliminates the conspiracy.
 
 ```go
 // Validate a single table
 errs := schema.ValidateSchema(ctx, db, dialect, TasksTable)
 for _, e := range errs {
-	log.Println(e) // "tasks.priority: column missing"
+    log.Println(e) // "tasks.priority: column missing"
 }
 
 // Validate all tables at once
 errs := schema.ValidateAll(ctx, db, dialect, UsersTable, TasksTable, StatusTable)
 ```
 
+Validation normalizes column and table names for the dialect automatically -- PascalCase declarations match the snake_case columns that Postgres DDL creates. It detects missing columns, extra columns, type mismatches, nullability mismatches, default mismatches, missing indexes, extra indexes, and index property changes.
+
 Use it in CI to catch schema drift:
 
 ```go
 func TestSchemaDrift(t *testing.T) {
-	errs := schema.ValidateSchema(ctx, db, dialect, TasksTable)
-	if errs != nil {
-		for _, e := range errs {
-			t.Error(e)
-		}
-	}
+    errs := schema.ValidateSchema(ctx, db, dialect, TasksTable)
+    if errs != nil {
+        for _, e := range errs {
+            t.Error(e)
+        }
+    }
 }
 ```
 
@@ -499,7 +526,11 @@ for _, d := range result.Diffs {
 
 #### Structured Diffs
 
-The diff is the representation that carries controls. It tells you -- or your CI pipeline, or an agent -- exactly what changed and what to do about it. No migration framework. No up/down files. The diff IS the instruction set.
+> If your client must read your API docs to know which URL to POST to, that is out-of-band. If your client must know that `/api/v2/users/{id}` is the pattern for user resources, that is out-of-band.
+>
+> -- The Wisdom of the Uniform Interface
+
+The diff is the representation that carries controls. It tells you -- or your CI pipeline, or an agent -- exactly what changed and what to do about it. No migration framework. No up/down files. The diff IS the instruction set. No out-of-band knowledge required.
 
 ```go
 diff, err := schema.DiffSchema(ctx, db, dialect, TasksTable)
@@ -543,12 +574,16 @@ schema.Ensure(ctx, db, dialect, tables,
 | **Columns**      | Presence (missing/extra), type, nullability, default  |
 | **Indexes**      | Presence (missing/extra), columns, uniqueness, WHERE  |
 
-Not currently covered (the snapshot model has fields for these, but drift detection does not compare them):
+Type comparison normalizes across dialect aliases -- `VARCHAR(255)` matches `CHARACTER VARYING(255)`, `TIMESTAMPTZ` matches `TIMESTAMP WITH TIME ZONE`, `SERIAL` matches `INTEGER` for auto-increment columns. Default comparison normalizes syntax noise (whitespace, outer parentheses, SQL keyword casing) while preserving case-sensitive string literals -- `'Admin'` and `'admin'` are correctly detected as different.
+
+Not currently covered by drift detection:
 
 - Column-level unique constraints
-- Primary key drift (PK is generated in DDL but not introspected for drift)
+- Primary key drift
 - Foreign key constraints (ref table, ref column, ON DELETE, ON UPDATE)
 - CHECK constraints
+
+These are modeled in the snapshot structs but not yet introspected from live databases. Contributions for per-dialect constraint introspection are welcome as focused PRs.
 
 ## Dialect Interface
 
@@ -608,6 +643,8 @@ Each engine speaks its own dialect:
 | `UUIDType()`       | `UUID` / `TEXT` / `UNIQUEIDENTIFIER`                                                         |
 | `JSONType()`       | `JSONB` / `TEXT` / `NVARCHAR(MAX)`                                                           |
 
+For literal type strings that bypass dialect mapping, use `TypeLiteral("BYTEA")`.
+
 ### Identifier Normalization
 
 `NormalizeIdentifier` transforms identifiers to the engine's idiomatic form. For Postgres, PascalCase names are converted to snake_case. Other engines return names unchanged.
@@ -622,7 +659,7 @@ sq := chuck.SQLiteDialect{}
 sq.NormalizeIdentifier("CreatedAt") // "CreatedAt" (unchanged)
 ```
 
-All schema DDL methods apply normalization automatically -- column names, table names, references, and index columns are all normalized for the target dialect.
+All schema DDL methods and `dbrepo` builders apply normalization automatically when a dialect is set -- column names, table names, references, and index columns are all normalized for the target dialect.
 
 ### DDL Methods
 
@@ -670,16 +707,16 @@ Functions that only need a subset of `Dialect` can accept a sub-interface direct
 ```go
 // Only needs identifier quoting -- accepts Identifier, not full Dialect.
 func quotedColumnList(d chuck.Identifier, cols []string) string {
-	quoted := make([]string, len(cols))
-	for i, c := range cols {
-		quoted[i] = d.QuoteIdentifier(c)
-	}
-	return strings.Join(quoted, ", ")
+    quoted := make([]string, len(cols))
+    for i, c := range cols {
+        quoted[i] = d.QuoteIdentifier(c)
+    }
+    return strings.Join(quoted, ", ")
 }
 
 // Needs type mapping and identifiers -- accepts Dialect (which embeds both).
 func columnDDL(d chuck.Dialect, name string) string {
-	return d.QuoteIdentifier(name) + " " + d.IntType()
+    return d.QuoteIdentifier(name) + " " + d.IntType()
 }
 ```
 
@@ -732,12 +769,19 @@ dbrepo.SetClause("Name", "Email")                    // "Name = @Name, Email = @
 dbrepo.InsertInto("Users", "Name", "Email")          // "INSERT INTO Users (Name, Email) VALUES (@Name, @Email)"
 ```
 
-Dialect-aware variants quote identifiers:
+Dialect-aware variants normalize and quote identifiers:
 
 ```go
 dbrepo.ColumnsQ(d, "ID", "Name")                // `"id", "name"` (Postgres, normalized)
 dbrepo.SetClauseQ(d, "Name", "Email")           // `"name" = @Name, "email" = @Email`
 dbrepo.InsertIntoQ(d, "Users", "Name", "Email") // `INSERT INTO "users" ("name", "email") VALUES (@Name, @Email)`
+```
+
+Convert a map to deterministic named args for use with `db.ExecContext`:
+
+```go
+args := dbrepo.NamedArgs(map[string]any{"Name": "Alice", "Email": "alice@test.com"})
+// []any{sql.Named("Email", "alice@test.com"), sql.Named("Name", "Alice")} -- sorted by key
 ```
 
 ### Bulk INSERT
@@ -789,8 +833,8 @@ Compose WHERE clauses with named parameters:
 
 ```go
 w := dbrepo.NewWhere().
-	And("DepartmentID = @DeptID", sql.Named("DeptID", 5)).
-	AndIf(searchTerm != "", "Name LIKE @Pattern", sql.Named("Pattern", "%"+searchTerm+"%"))
+    And("DepartmentID = @DeptID", sql.Named("DeptID", 5)).
+    AndIf(searchTerm != "", "Name LIKE @Pattern", sql.Named("Pattern", "%"+searchTerm+"%"))
 
 query := "SELECT * FROM Users " + w.String()
 // "SELECT * FROM Users WHERE DepartmentID = @DeptID AND Name LIKE @Pattern"
@@ -800,8 +844,8 @@ query := "SELECT * FROM Users " + w.String()
 
 ```go
 w := dbrepo.NewWhere().
-	And("Status = @Status", sql.Named("Status", "active")).
-	Or("Status = @Status2", sql.Named("Status2", "pending"))
+    And("Status = @Status", sql.Named("Status", "active")).
+    Or("Status = @Status2", sql.Named("Status2", "pending"))
 // WHERE Status = @Status OR Status = @Status2
 ```
 
@@ -811,7 +855,7 @@ Set a dialect for dialect-aware behavior (e.g. ILIKE on Postgres):
 w := dbrepo.NewWhere().WithDialect(dialect)
 ```
 
-Semantic filter methods encode domain patterns. Each accepts an optional column name override for custom naming:
+Semantic filter methods encode domain patterns directly. Each corresponds to a schema trait and accepts an optional column name override for snake_case schemas:
 
 ```go
 w := dbrepo.NewWhere().WithDialect(dialect).
@@ -822,6 +866,7 @@ w := dbrepo.NewWhere().WithDialect(dialect).
     HasStatus("active").           // Status = @Status
     HasVersion(3).                 // Version = @Version
     IsRoot().                      // ParentID IS NULL
+    HasParent(42).                 // ParentID = @ParentID
     NotReplaced().                 // ReplacedByID IS NULL
     Search("chuck", "Name", "Bio")  // Postgres: ILIKE, others: LIKE
 
@@ -835,10 +880,10 @@ w := dbrepo.NewWhere().
 
 ```go
 sb := dbrepo.NewSelect("Tasks", "ID", "Title", "Status").
-	Where(w).
-	OrderByMap("title:asc,created_at:desc", columnMap, "ID ASC").
-	Paginate(20, 0).
-	WithDialect(dialect)
+    Where(w).
+    OrderByMap("title:asc,created_at:desc", columnMap, "ID ASC").
+    Paginate(20, 0).
+    WithDialect(dialect)
 
 query, args := sb.Build()
 countQuery, countArgs := sb.CountQuery()
@@ -850,10 +895,10 @@ When a dialect is set, table names and dot-qualified column names are automatica
 
 ```go
 sb := dbrepo.NewSelect("Tasks", "Tasks.ID", "Tasks.Title", "Users.Name").
-	Join("Users", "Tasks.AssigneeID = Users.ID").
-	LeftJoin("Statuses", "Tasks.StatusID = Statuses.ID").
-	Where(w).
-	WithDialect(dialect)
+    Join("Users", "Tasks.AssigneeID = Users.ID").
+    LeftJoin("Statuses", "Tasks.StatusID = Statuses.ID").
+    Where(w).
+    WithDialect(dialect)
 
 query, args := sb.Build()
 // Postgres (normalized to snake_case):
@@ -885,8 +930,8 @@ UpdateBuilder speaks the dialect, understands WHERE clauses, and composes SET fr
 
 ```go
 ub := dbrepo.NewUpdate("Tasks", "Title", "Status").
-	Where(w).
-	WithDialect(dialect)
+    Where(w).
+    WithDialect(dialect)
 
 query, args := ub.Build()
 // UPDATE "tasks" SET "title" = @Title, "status" = @Status WHERE DeletedAt IS NULL
@@ -900,8 +945,8 @@ WhereBuilder's semantic filters are most valuable here -- accidentally updating 
 
 ```go
 db := dbrepo.NewDelete("Tasks").
-	Where(dbrepo.NewWhere().NotDeleted().HasStatus("archived")).
-	WithDialect(dialect)
+    Where(dbrepo.NewWhere().NotDeleted().HasStatus("archived")).
+    WithDialect(dialect)
 
 query, args := db.Build()
 // DELETE FROM "tasks" WHERE DeletedAt IS NULL AND Status = @Status
@@ -911,30 +956,37 @@ Same pattern -- `.Where()`, `.WithDialect()`, `.Returning()`, `.Build()`.
 
 ### Audit Helpers
 
-Domain patterns as plain functions -- no base class, no embedded struct:
+> grug supernatural power and marvelous activity: drawing water and carrying firewood.
+>
+> (draw water in this metaphor is `SELECT` query. carry firewood is `template.Execute`. grug want be clear. metaphor sometimes confuse junior developer.)
+>
+> -- Layman Grug
+
+Domain patterns as plain functions -- no base class, no embedded struct. Each function corresponds to a schema trait: `WithTimestamps()` declares the columns, these helpers set the values.
 
 ```go
-// Creating a record
+// Creating a record (pairs with WithTimestamps, WithVersion, WithAuditTrail)
 dbrepo.SetCreateTimestamps(&t.CreatedAt, &t.UpdatedAt)
 dbrepo.InitVersion(&t.Version)
 dbrepo.SetCreateAudit(&t.CreatedBy, &t.UpdatedBy, currentUser)
 
-// Updating
+// Updating (pairs with WithTimestamps, WithVersion, WithAuditTrail)
 dbrepo.SetUpdateTimestamp(&t.UpdatedAt)
 dbrepo.IncrementVersion(&t.Version)
+dbrepo.SetUpdateAudit(&t.UpdatedBy, currentUser)
 
-// Soft delete
+// Soft delete (pairs with WithSoftDelete, WithAuditTrail)
 dbrepo.SetSoftDelete(&t.DeletedAt)
 dbrepo.SetDeleteAudit(&t.DeletedAt, &t.DeletedBy, currentUser)
 
-// State management
+// State management (pairs with WithStatus, WithArchive, WithExpiry, WithReplacement)
 dbrepo.SetStatus(&t.Status, "published")
 dbrepo.SetArchive(&t.ArchivedAt)
-dbrepo.ClearArchive(&t.ArchivedAt) // sets sql.NullTime.Valid = false (SQL NULL)
+dbrepo.ClearArchive(&t.ArchivedAt) // SQL NULL
 dbrepo.SetExpiry(&t.ExpiresAt, future)
-dbrepo.ClearExpiry(&t.ExpiresAt) // sets sql.NullTime.Valid = false (SQL NULL)
+dbrepo.ClearExpiry(&t.ExpiresAt) // SQL NULL
 dbrepo.SetReplacement(&t.ReplacedByID, newID)
-dbrepo.ClearReplacement(&t.ReplacedByID) // sets sql.NullInt64.Valid = false (SQL NULL)
+dbrepo.ClearReplacement(&t.ReplacedByID) // SQL NULL
 ```
 
 For deterministic tests, override the clock:
@@ -959,7 +1011,7 @@ A schema definition is the same kind of covenant -- between your application and
 
 ## Testing
 
-Tests run against all three engines. SQLite runs in-memory, Postgres and MSSQL run via service containers in CI.
+Tests run against all three engines. SQLite runs in-memory by default. Postgres and MSSQL integration tests are gated behind environment variables:
 
 ```bash
 # Unit tests (always work, no external deps)
@@ -967,8 +1019,8 @@ go test ./...
 
 # Integration tests against real databases
 CHUCK_POSTGRES_URL="postgres://user:pass@localhost:5432/testdb?sslmode=disable" \
-	CHUCK_MSSQL_URL="sqlserver://SA:Password@localhost:1433?database=master" \
-	go test ./... -v
+    CHUCK_MSSQL_URL="sqlserver://SA:Password@localhost:1433?database=master" \
+    go test ./... -v
 ```
 
 ## Architecture

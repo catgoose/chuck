@@ -533,6 +533,22 @@ schema.Ensure(ctx, db, dialect, tables,
 )
 ```
 
+#### Drift Detection Coverage
+
+`DiffSchema` and `ValidateSchema` compare declared and live schemas across these dimensions:
+
+| Dimension        | What's compared                                      |
+| ---------------- | ---------------------------------------------------- |
+| **Columns**      | Presence (missing/extra), type, nullability, default  |
+| **Indexes**      | Presence (missing/extra), columns, uniqueness, WHERE  |
+
+Not currently covered (the snapshot model has fields for these, but drift detection does not compare them):
+
+- Column-level unique constraints
+- Primary key drift (PK is generated in DDL but not introspected for drift)
+- Foreign key constraints (ref table, ref column, ON DELETE, ON UPDATE)
+- CHECK constraints
+
 ## Dialect Interface
 
 > How many web browsers know the difference between a banking application and a wiki? _None of them._ NONE. And yet they operate ALL OF THEM.

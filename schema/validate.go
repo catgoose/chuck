@@ -141,6 +141,20 @@ func ValidateSchema(ctx context.Context, db *sql.DB, d chuck.Dialect, td *TableD
 		}
 	}
 
+	// Check for extra indexes in live that aren't declared
+	declaredIndexMap := make(map[string]bool, len(declared.Indexes))
+	for _, idx := range declared.Indexes {
+		declaredIndexMap[idx.Name] = true
+	}
+	for _, idx := range live.Indexes {
+		if !declaredIndexMap[idx.Name] {
+			errs = append(errs, SchemaError{
+				Table:   tableName,
+				Message: fmt.Sprintf("unexpected index %q (exists in database but not in declaration)", idx.Name),
+			})
+		}
+	}
+
 	if len(errs) == 0 {
 		return nil
 	}

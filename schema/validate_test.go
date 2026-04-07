@@ -199,6 +199,27 @@ func TestValidateSchema(t *testing.T) {
 		assert.True(t, found, "expected uniqueness mismatch error, got: %v", errs)
 	})
 
+	t.Run("extra_live_index", func(t *testing.T) {
+		// The DB has idx_items_name but we don't declare any indexes
+		noIndexes := NewTable("Items").
+			Columns(
+				AutoIncrCol("ID"),
+				Col("Name", TypeString(255)).NotNull(),
+				Col("Status", TypeVarchar(50)).NotNull().Default("'active'"),
+			)
+
+		errs := ValidateSchema(ctx, db, d, noIndexes)
+		require.NotNil(t, errs)
+
+		var found bool
+		for _, e := range errs {
+			if strings.Contains(e.Message, `unexpected index "idx_items_name"`) {
+				found = true
+			}
+		}
+		assert.True(t, found, "expected unexpected index error for idx_items_name, got: %v", errs)
+	})
+
 	t.Run("index_columns_mismatch", func(t *testing.T) {
 		// idx_items_name covers "Name" in DB, declare as covering "Name, Status"
 		mismatch := NewTable("Items").

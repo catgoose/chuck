@@ -222,6 +222,10 @@ func WriteDiffsTo(diffs []*SchemaDiff, w io.Writer) (int64, error) {
 // it can be compared against the base data type reported by a live database.
 // For example, "INTEGER PRIMARY KEY AUTOINCREMENT" becomes "INTEGER", and
 // "SERIAL PRIMARY KEY" becomes "SERIAL".
+//
+// It also normalizes Postgres type aliases so that declared types like
+// "VARCHAR(255)" match live types like "CHARACTER VARYING(255)", and
+// "TIMESTAMPTZ" matches "TIMESTAMP WITH TIME ZONE".
 func normalizeType(s string) string {
 	s = strings.TrimSpace(s)
 	upper := strings.ToUpper(s)
@@ -236,7 +240,77 @@ func normalizeType(s string) string {
 	} {
 		upper = strings.ReplaceAll(upper, kw, "")
 	}
-	return strings.TrimSpace(upper)
+	upper = strings.TrimSpace(upper)
+
+	// Normalize Postgres type aliases to canonical forms.
+	// This ensures declared types match what format_type() returns from pg_attribute.
+	upper = normalizePostgresAlias(upper)
+
+	return upper
+}
+
+// postgresAliases maps Postgres type aliases to their canonical forms.
+// Aliases without parameters (length/precision) are listed here.
+// Parameterized aliases like VARCHAR(n) are handled separately.
+var postgresAliases = map[string]string{
+	"TIMESTAMPTZ":              "TIMESTAMP WITH TIME ZONE",
+	"TIMESTAMP WITH TIME ZONE": "TIMESTAMP WITH TIME ZONE",
+	"TIMESTAMP":                "TIMESTAMP WITHOUT TIME ZONE",
+	"TIMETZ":                   "TIME WITH TIME ZONE",
+	"TIME WITH TIME ZONE":      "TIME WITH TIME ZONE",
+	"TIME":                     "TIME WITHOUT TIME ZONE",
+	"BOOL":                     "BOOLEAN",
+	"INT":                      "INTEGER",
+	"INT4":                     "INTEGER",
+	"INT2":                     "SMALLINT",
+	"INT8":                     "BIGINT",
+	"FLOAT4":                   "REAL",
+	"FLOAT8":                   "DOUBLE PRECISION",
+	"SERIAL":                   "INTEGER",
+	"BIGSERIAL":                "BIGINT",
+	"SMALLSERIAL":              "SMALLINT",
+}
+
+// normalizePostgresAlias converts Postgres type aliases to canonical forms so that
+// declared types (e.g., VARCHAR(255), TIMESTAMPTZ, NUMERIC(10,2)) match the
+// strings returned by format_type() (e.g., CHARACTER VARYING(255), TIMESTAMP WITH TIME ZONE).
+func normalizePostgresAlias(s string) string {
+	// Extract base type and optional parenthesized params
+	base, params := splitTypeParams(s)
+
+	// Check for parameterized alias normalization
+	switch base {
+	case "VARCHAR", "CHARACTER VARYING":
+		base = "CHARACTER VARYING"
+	case "CHAR", "CHARACTER":
+		base = "CHARACTER"
+	case "NUMERIC", "DECIMAL":
+		base = "NUMERIC"
+	default:
+		// Check non-parameterized aliases
+		if canonical, ok := postgresAliases[base]; ok {
+			base = canonical
+		}
+	}
+
+	if params != "" {
+		return base + "(" + params + ")"
+	}
+	return base
+}
+
+// splitTypeParams splits a type string like "VARCHAR(255)" into ("VARCHAR", "255")
+// or "INTEGER" into ("INTEGER", "").
+func splitTypeParams(s string) (string, string) {
+	idx := strings.IndexByte(s, '(')
+	if idx < 0 {
+		return s, ""
+	}
+	end := strings.LastIndexByte(s, ')')
+	if end < idx {
+		return s, ""
+	}
+	return strings.TrimSpace(s[:idx]), strings.TrimSpace(s[idx+1 : end])
 }
 
 // normalizeDefault normalizes a default value for comparison. Different databases

@@ -52,6 +52,13 @@ type ColumnDiff struct {
 
 // DiffSchema compares a declared table against the live database and returns
 // a structured diff. If the table doesn't exist, TableMissing is true.
+//
+// The comparison covers the following dimensions:
+//   - Column presence (missing/extra), type, nullability, and default value
+//   - Index presence (missing/extra), columns, uniqueness, and partial predicate (WHERE clause)
+//
+// It does not currently detect drift in column-level unique constraints,
+// primary keys, foreign keys, or CHECK constraints.
 func DiffSchema(ctx context.Context, db *sql.DB, d chuck.Dialect, td *TableDef) (*SchemaDiff, error) {
 	tableName := d.NormalizeIdentifier(td.Name)
 	diff := &SchemaDiff{Table: tableName}

@@ -25,7 +25,14 @@ func (e SchemaError) Error() string {
 
 // ValidateSchema compares a declared table definition against the live database
 // and returns all mismatches found. Column names are normalized for the dialect
-// before comparison — e.g. "CreatedAt" becomes "created_at" on Postgres.
+// before comparison -- e.g. "CreatedAt" becomes "created_at" on Postgres.
+//
+// The comparison covers the following dimensions:
+//   - Column presence (missing/extra), type, nullability, and default value
+//   - Index presence (missing/extra), columns, uniqueness, and partial predicate (WHERE clause)
+//
+// It does not currently detect drift in column-level unique constraints,
+// primary keys, foreign keys, or CHECK constraints.
 //
 // Returns nil if the live schema matches the declaration.
 func ValidateSchema(ctx context.Context, db *sql.DB, d chuck.Dialect, td *TableDef) []SchemaError {

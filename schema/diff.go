@@ -21,7 +21,20 @@ type SchemaDiff struct {
 	ChangedColumns []ColumnDiff     `json:"changed_columns,omitempty"`
 	MissingIndexes []IndexSnapshot  `json:"missing_indexes,omitempty"`
 	ExtraIndexes   []string         `json:"extra_indexes,omitempty"`
+	ChangedIndexes []IndexDiff      `json:"changed_indexes,omitempty"`
 	HasDrift       bool             `json:"has_drift"`
+}
+
+// IndexDiff describes an index that exists in both declared and live schemas
+// but has mismatched properties (columns, uniqueness, or where clause).
+type IndexDiff struct {
+	Name            string `json:"name"`
+	DeclaredColumns string `json:"declared_columns,omitempty"`
+	LiveColumns     string `json:"live_columns,omitempty"`
+	DeclaredUnique  bool   `json:"declared_unique"`
+	LiveUnique      bool   `json:"live_unique"`
+	DeclaredWhere   string `json:"declared_where,omitempty"`
+	LiveWhere       string `json:"live_where,omitempty"`
 }
 
 // ColumnDiff describes a column that exists in both declared and live schemas
@@ -95,13 +108,28 @@ func DiffSchema(ctx context.Context, db *sql.DB, d chuck.Dialect, td *TableDef) 
 	}
 
 	// Indexes in declared but not in live
-	liveIndexMap := make(map[string]bool, len(live.Indexes))
+	liveIndexMap := make(map[string]LiveIndexSnapshot, len(live.Indexes))
 	for _, idx := range live.Indexes {
-		liveIndexMap[idx.Name] = true
+		liveIndexMap[idx.Name] = idx
 	}
 	for _, idx := range declared.Indexes {
-		if !liveIndexMap[idx.Name] {
+		liveIdx, ok := liveIndexMap[idx.Name]
+		if !ok {
 			diff.MissingIndexes = append(diff.MissingIndexes, idx)
+			continue
+		}
+		// Compare index properties
+		liveColStr := strings.Join(liveIdx.Columns, ", ")
+		if idx.Columns != liveColStr || idx.Unique != liveIdx.Unique || idx.Where != liveIdx.Where {
+			diff.ChangedIndexes = append(diff.ChangedIndexes, IndexDiff{
+				Name:            idx.Name,
+				DeclaredColumns: idx.Columns,
+				LiveColumns:     liveColStr,
+				DeclaredUnique:  idx.Unique,
+				LiveUnique:      liveIdx.Unique,
+				DeclaredWhere:   idx.Where,
+				LiveWhere:       liveIdx.Where,
+			})
 		}
 	}
 
@@ -120,7 +148,8 @@ func DiffSchema(ctx context.Context, db *sql.DB, d chuck.Dialect, td *TableDef) 
 		len(diff.RemovedColumns) > 0 ||
 		len(diff.ChangedColumns) > 0 ||
 		len(diff.MissingIndexes) > 0 ||
-		len(diff.ExtraIndexes) > 0
+		len(diff.ExtraIndexes) > 0 ||
+		len(diff.ChangedIndexes) > 0
 
 	return diff, nil
 }

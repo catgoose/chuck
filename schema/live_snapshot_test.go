@@ -70,9 +70,11 @@ func TestLiveSnapshot(t *testing.T) {
 		}
 	}
 
-	// Should have the index
+	// Should have the index with columns and uniqueness
 	require.Len(t, snap.Indexes, 1)
 	assert.Equal(t, "idx_tasks_title", snap.Indexes[0].Name)
+	assert.Equal(t, []string{"Title"}, snap.Indexes[0].Columns)
+	assert.False(t, snap.Indexes[0].Unique)
 }
 
 func TestLiveSnapshotTableNotExists(t *testing.T) {
@@ -245,6 +247,90 @@ func TestQueryIndexesMultiple(t *testing.T) {
 	indexNames := []string{snap.Indexes[0].Name, snap.Indexes[1].Name}
 	assert.Contains(t, indexNames, "idx_orders_customer")
 	assert.Contains(t, indexNames, "idx_orders_status")
+}
+
+func TestLiveSnapshotUniqueIndex(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	d := chuck.SQLiteDialect{}
+
+	table := NewTable("Emails").
+		Columns(
+			AutoIncrCol("ID"),
+			Col("Address", TypeVarchar(255)).NotNull(),
+		).
+		Indexes(
+			UniqueIndex("idx_emails_address", "Address"),
+		)
+
+	for _, stmt := range table.CreateIfNotExistsSQL(d) {
+		_, err := db.ExecContext(ctx, stmt)
+		require.NoError(t, err)
+	}
+
+	snap, err := LiveSnapshot(ctx, db, d, "Emails")
+	require.NoError(t, err)
+	require.Len(t, snap.Indexes, 1)
+	assert.Equal(t, "idx_emails_address", snap.Indexes[0].Name)
+	assert.Equal(t, []string{"Address"}, snap.Indexes[0].Columns)
+	assert.True(t, snap.Indexes[0].Unique)
+}
+
+func TestLiveSnapshotMultiColumnIndex(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	d := chuck.SQLiteDialect{}
+
+	table := NewTable("Events").
+		Columns(
+			AutoIncrCol("ID"),
+			Col("Category", TypeVarchar(100)).NotNull(),
+			Col("Priority", TypeInt()).NotNull(),
+		).
+		Indexes(
+			Index("idx_events_cat_pri", "Category, Priority"),
+		)
+
+	for _, stmt := range table.CreateIfNotExistsSQL(d) {
+		_, err := db.ExecContext(ctx, stmt)
+		require.NoError(t, err)
+	}
+
+	snap, err := LiveSnapshot(ctx, db, d, "Events")
+	require.NoError(t, err)
+	require.Len(t, snap.Indexes, 1)
+	assert.Equal(t, "idx_events_cat_pri", snap.Indexes[0].Name)
+	assert.Equal(t, []string{"Category", "Priority"}, snap.Indexes[0].Columns)
+	assert.False(t, snap.Indexes[0].Unique)
+}
+
+func TestLiveSnapshotPartialIndex(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	d := chuck.SQLiteDialect{}
+
+	table := NewTable("Tickets").
+		Columns(
+			AutoIncrCol("ID"),
+			Col("Status", TypeVarchar(50)).NotNull(),
+			Col("AssigneeID", TypeInt()),
+		).
+		Indexes(
+			Index("idx_tickets_open", "AssigneeID").Where("Status = 'open'"),
+		)
+
+	for _, stmt := range table.CreateIfNotExistsSQL(d) {
+		_, err := db.ExecContext(ctx, stmt)
+		require.NoError(t, err)
+	}
+
+	snap, err := LiveSnapshot(ctx, db, d, "Tickets")
+	require.NoError(t, err)
+	require.Len(t, snap.Indexes, 1)
+	assert.Equal(t, "idx_tickets_open", snap.Indexes[0].Name)
+	assert.Equal(t, []string{"AssigneeID"}, snap.Indexes[0].Columns)
+	assert.False(t, snap.Indexes[0].Unique)
+	assert.Equal(t, "Status = 'open'", snap.Indexes[0].Where)
 }
 
 func TestLiveSnapshotCompareWithDeclared(t *testing.T) {

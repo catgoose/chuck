@@ -19,8 +19,10 @@ type LiveColumnSnapshot struct {
 
 // LiveIndexSnapshot describes an index as it exists in a live database.
 type LiveIndexSnapshot struct {
-	Name    string `json:"name"`
-	Columns string `json:"columns"`
+	Name    string   `json:"name"`
+	Columns []string `json:"columns"`
+	Unique  bool     `json:"unique,omitempty"`
+	Where   string   `json:"where,omitempty"`
 }
 
 // LiveTableSnapshot describes a table's actual schema as read from a live database.
@@ -111,17 +113,114 @@ func queryColumns(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName st
 }
 
 func queryIndexes(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName string) ([]LiveIndexSnapshot, error) {
-	var query string
 	switch d.Engine() {
 	case chuck.SQLite:
-		query = `SELECT name, '' AS columns FROM pragma_index_list(?) WHERE origin != 'pk'`
+		return queryIndexesSQLite(ctx, db, tableName)
 	case chuck.Postgres:
-		query = `SELECT i.relname, pg_get_indexdef(ix.indexrelid) FROM pg_index ix JOIN pg_class t ON t.oid = ix.indrelid JOIN pg_class i ON i.oid = ix.indexrelid WHERE t.relname = $1 AND NOT ix.indisprimary`
+		return queryIndexesPostgres(ctx, db, tableName)
 	case chuck.MSSQL:
-		query = `SELECT si.name, STUFF((SELECT ', ' + sc.name FROM sys.index_columns ic JOIN sys.columns sc ON sc.object_id = ic.object_id AND sc.column_id = ic.column_id WHERE ic.object_id = si.object_id AND ic.index_id = si.index_id FOR XML PATH('')), 1, 2, '') FROM sys.indexes si WHERE si.object_id = OBJECT_ID(@p1) AND si.is_primary_key = 0 AND si.name IS NOT NULL`
+		return queryIndexesMSSQL(ctx, db, tableName)
 	default:
 		return nil, fmt.Errorf("unsupported engine: %s", d.Engine())
 	}
+}
+
+func queryIndexesSQLite(ctx context.Context, db *sql.DB, tableName string) ([]LiveIndexSnapshot, error) {
+	// pragma_index_list returns: seq, name, unique, origin, partial
+	listQuery := `SELECT name, "unique", partial FROM pragma_index_list(?) WHERE origin != 'pk'`
+	rows, err := db.QueryContext(ctx, listQuery, tableName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type idxMeta struct {
+		name    string
+		unique  bool
+		partial bool
+	}
+	var metas []idxMeta
+	for rows.Next() {
+		var name string
+		var unique, partial int
+		if err := rows.Scan(&name, &unique, &partial); err != nil {
+			return nil, err
+		}
+		metas = append(metas, idxMeta{name: name, unique: unique == 1, partial: partial == 1})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var indexes []LiveIndexSnapshot
+	for _, m := range metas {
+		// Get columns via pragma_index_info
+		colQuery := `SELECT name FROM pragma_index_info(?) ORDER BY seqno`
+		colRows, err := db.QueryContext(ctx, colQuery, m.name)
+		if err != nil {
+			return nil, err
+		}
+		var cols []string
+		for colRows.Next() {
+			var col string
+			if err := colRows.Scan(&col); err != nil {
+				colRows.Close()
+				return nil, err
+			}
+			cols = append(cols, col)
+		}
+		colRows.Close()
+		if err := colRows.Err(); err != nil {
+			return nil, err
+		}
+
+		idx := LiveIndexSnapshot{
+			Name:    m.name,
+			Columns: cols,
+			Unique:  m.unique,
+		}
+
+		// SQLite stores the WHERE clause in the index SQL; extract it if partial.
+		if m.partial {
+			sqlQuery := `SELECT sql FROM sqlite_master WHERE type='index' AND name=?`
+			var idxSQL sql.NullString
+			if err := db.QueryRowContext(ctx, sqlQuery, m.name).Scan(&idxSQL); err == nil && idxSQL.Valid {
+				if w := extractSQLiteWhere(idxSQL.String); w != "" {
+					idx.Where = w
+				}
+			}
+		}
+
+		indexes = append(indexes, idx)
+	}
+	return indexes, nil
+}
+
+// extractSQLiteWhere extracts the WHERE clause from a SQLite CREATE INDEX statement.
+func extractSQLiteWhere(createSQL string) string {
+	upper := strings.ToUpper(createSQL)
+	idx := strings.LastIndex(upper, " WHERE ")
+	if idx < 0 {
+		return ""
+	}
+	return strings.TrimSpace(createSQL[idx+7:])
+}
+
+func queryIndexesPostgres(ctx context.Context, db *sql.DB, tableName string) ([]LiveIndexSnapshot, error) {
+	query := `
+		SELECT
+			i.relname AS index_name,
+			ix.indisunique,
+			COALESCE(pg_get_expr(ix.indpred, ix.indrelid), '') AS predicate,
+			array_to_string(ARRAY(
+				SELECT a.attname
+				FROM unnest(ix.indkey) k
+				JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k
+			), ',') AS columns
+		FROM pg_index ix
+		JOIN pg_class t ON t.oid = ix.indrelid
+		JOIN pg_class i ON i.oid = ix.indexrelid
+		WHERE t.relname = $1 AND NOT ix.indisprimary`
 
 	rows, err := db.QueryContext(ctx, query, tableName)
 	if err != nil {
@@ -131,16 +230,78 @@ func queryIndexes(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName st
 
 	var indexes []LiveIndexSnapshot
 	for rows.Next() {
-		var name, columns string
-		if err := rows.Scan(&name, &columns); err != nil {
+		var name, predicate, columns string
+		var unique bool
+		if err := rows.Scan(&name, &unique, &predicate, &columns); err != nil {
 			return nil, err
 		}
-		indexes = append(indexes, LiveIndexSnapshot{
-			Name:    name,
-			Columns: columns,
-		})
+		idx := LiveIndexSnapshot{
+			Name:   name,
+			Unique: unique,
+			Where:  predicate,
+		}
+		if columns != "" {
+			idx.Columns = splitAndTrim(columns, ",")
+		}
+		indexes = append(indexes, idx)
 	}
 	return indexes, rows.Err()
+}
+
+func queryIndexesMSSQL(ctx context.Context, db *sql.DB, tableName string) ([]LiveIndexSnapshot, error) {
+	query := `
+		SELECT
+			si.name,
+			si.is_unique,
+			COALESCE(si.filter_definition, ''),
+			STUFF((
+				SELECT ', ' + sc.name
+				FROM sys.index_columns ic
+				JOIN sys.columns sc ON sc.object_id = ic.object_id AND sc.column_id = ic.column_id
+				WHERE ic.object_id = si.object_id AND ic.index_id = si.index_id
+				FOR XML PATH('')
+			), 1, 2, '')
+		FROM sys.indexes si
+		WHERE si.object_id = OBJECT_ID(@p1)
+		AND si.is_primary_key = 0
+		AND si.name IS NOT NULL`
+
+	rows, err := db.QueryContext(ctx, query, tableName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var indexes []LiveIndexSnapshot
+	for rows.Next() {
+		var name, filter, columns string
+		var unique bool
+		if err := rows.Scan(&name, &unique, &filter, &columns); err != nil {
+			return nil, err
+		}
+		idx := LiveIndexSnapshot{
+			Name:   name,
+			Unique: unique,
+			Where:  filter,
+		}
+		if columns != "" {
+			idx.Columns = splitAndTrim(columns, ",")
+		}
+		indexes = append(indexes, idx)
+	}
+	return indexes, rows.Err()
+}
+
+// splitAndTrim splits a string by separator and trims whitespace from each element.
+func splitAndTrim(s, sep string) []string {
+	parts := strings.Split(s, sep)
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			result = append(result, t)
+		}
+	}
+	return result
 }
 
 // LiveSnapshotString returns a human-readable representation of a live table schema,
@@ -162,10 +323,19 @@ func (s LiveTableSnapshot) String() string {
 	}
 
 	for _, idx := range s.Indexes {
-		if idx.Columns != "" {
-			fmt.Fprintf(&b, "  INDEX %s ON (%s)\n", idx.Name, idx.Columns)
+		prefix := "INDEX"
+		if idx.Unique {
+			prefix = "UNIQUE INDEX"
+		}
+		colStr := strings.Join(idx.Columns, ", ")
+		if colStr != "" {
+			if idx.Where != "" {
+				fmt.Fprintf(&b, "  %s %s ON (%s) WHERE %s\n", prefix, idx.Name, colStr, idx.Where)
+			} else {
+				fmt.Fprintf(&b, "  %s %s ON (%s)\n", prefix, idx.Name, colStr)
+			}
 		} else {
-			fmt.Fprintf(&b, "  INDEX %s\n", idx.Name)
+			fmt.Fprintf(&b, "  %s %s\n", prefix, idx.Name)
 		}
 	}
 

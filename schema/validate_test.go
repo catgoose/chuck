@@ -126,6 +126,54 @@ func TestValidateSchema(t *testing.T) {
 		}
 		assert.Contains(t, messages, `Items: index "idx_items_status" missing`)
 	})
+
+	t.Run("index_uniqueness_mismatch", func(t *testing.T) {
+		// idx_items_name is non-unique in DB, declare as unique
+		mismatch := NewTable("Items").
+			Columns(
+				AutoIncrCol("ID"),
+				Col("Name", TypeString(255)).NotNull(),
+				Col("Status", TypeVarchar(50)).NotNull(),
+			).
+			Indexes(
+				UniqueIndex("idx_items_name", "Name"),
+			)
+
+		errs := ValidateSchema(ctx, db, d, mismatch)
+		require.NotNil(t, errs)
+
+		var found bool
+		for _, e := range errs {
+			if strings.Contains(e.Message, "uniqueness mismatch") {
+				found = true
+			}
+		}
+		assert.True(t, found, "expected uniqueness mismatch error, got: %v", errs)
+	})
+
+	t.Run("index_columns_mismatch", func(t *testing.T) {
+		// idx_items_name covers "Name" in DB, declare as covering "Name, Status"
+		mismatch := NewTable("Items").
+			Columns(
+				AutoIncrCol("ID"),
+				Col("Name", TypeString(255)).NotNull(),
+				Col("Status", TypeVarchar(50)).NotNull(),
+			).
+			Indexes(
+				Index("idx_items_name", "Name, Status"),
+			)
+
+		errs := ValidateSchema(ctx, db, d, mismatch)
+		require.NotNil(t, errs)
+
+		var found bool
+		for _, e := range errs {
+			if strings.Contains(e.Message, "columns mismatch") {
+				found = true
+			}
+		}
+		assert.True(t, found, "expected columns mismatch error, got: %v", errs)
+	})
 }
 
 func TestValidateSchemaPostgresNormalization(t *testing.T) {

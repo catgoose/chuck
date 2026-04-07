@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/catgoose/chuck"
 )
@@ -105,16 +106,37 @@ func ValidateSchema(ctx context.Context, db *sql.DB, d chuck.Dialect, td *TableD
 		}
 	}
 
-	// Check declared indexes exist
-	liveIndexMap := make(map[string]bool, len(live.Indexes))
+	// Check declared indexes exist and match properties
+	liveIndexMap := make(map[string]LiveIndexSnapshot, len(live.Indexes))
 	for _, idx := range live.Indexes {
-		liveIndexMap[idx.Name] = true
+		liveIndexMap[idx.Name] = idx
 	}
 	for _, idx := range declared.Indexes {
-		if !liveIndexMap[idx.Name] {
+		liveIdx, ok := liveIndexMap[idx.Name]
+		if !ok {
 			errs = append(errs, SchemaError{
 				Table:   tableName,
 				Message: fmt.Sprintf("index %q missing", idx.Name),
+			})
+			continue
+		}
+		liveColStr := strings.Join(liveIdx.Columns, ", ")
+		if idx.Columns != liveColStr {
+			errs = append(errs, SchemaError{
+				Table:   tableName,
+				Message: fmt.Sprintf("index %q columns mismatch: declared %q, live %q", idx.Name, idx.Columns, liveColStr),
+			})
+		}
+		if idx.Unique != liveIdx.Unique {
+			errs = append(errs, SchemaError{
+				Table:   tableName,
+				Message: fmt.Sprintf("index %q uniqueness mismatch: declared unique=%v, live unique=%v", idx.Name, idx.Unique, liveIdx.Unique),
+			})
+		}
+		if idx.Where != liveIdx.Where {
+			errs = append(errs, SchemaError{
+				Table:   tableName,
+				Message: fmt.Sprintf("index %q where clause mismatch: declared %q, live %q", idx.Name, idx.Where, liveIdx.Where),
 			})
 		}
 	}

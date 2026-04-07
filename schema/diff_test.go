@@ -224,6 +224,146 @@ func TestDiffSchema(t *testing.T) {
 	})
 }
 
+func TestDiffSchemaIndexPropertyMismatch(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	d := chuck.SQLiteDialect{}
+
+	t.Run("uniqueness_mismatch", func(t *testing.T) {
+		// Create table with a non-unique index in the DB
+		table := NewTable("Products").
+			Columns(
+				AutoIncrCol("ID"),
+				Col("SKU", TypeVarchar(100)).NotNull(),
+			).
+			Indexes(
+				Index("idx_products_sku", "SKU"),
+			)
+
+		for _, stmt := range table.CreateIfNotExistsSQL(d) {
+			_, err := db.ExecContext(ctx, stmt)
+			require.NoError(t, err)
+		}
+
+		// Declare the same index but as unique — mismatch
+		declaredUnique := NewTable("Products").
+			Columns(
+				AutoIncrCol("ID"),
+				Col("SKU", TypeVarchar(100)).NotNull(),
+			).
+			Indexes(
+				UniqueIndex("idx_products_sku", "SKU"),
+			)
+
+		diff, err := DiffSchema(ctx, db, d, declaredUnique)
+		require.NoError(t, err)
+		assert.True(t, diff.HasDrift)
+		require.Len(t, diff.ChangedIndexes, 1)
+		assert.Equal(t, "idx_products_sku", diff.ChangedIndexes[0].Name)
+		assert.True(t, diff.ChangedIndexes[0].DeclaredUnique)
+		assert.False(t, diff.ChangedIndexes[0].LiveUnique)
+	})
+
+	t.Run("column_mismatch", func(t *testing.T) {
+		// Create table with index on one column
+		table := NewTable("Logs").
+			Columns(
+				AutoIncrCol("ID"),
+				Col("Level", TypeVarchar(50)).NotNull(),
+				Col("Source", TypeVarchar(100)).NotNull(),
+			).
+			Indexes(
+				Index("idx_logs_level", "Level"),
+			)
+
+		for _, stmt := range table.CreateIfNotExistsSQL(d) {
+			_, err := db.ExecContext(ctx, stmt)
+			require.NoError(t, err)
+		}
+
+		// Declare the index with different columns
+		declaredDiffCols := NewTable("Logs").
+			Columns(
+				AutoIncrCol("ID"),
+				Col("Level", TypeVarchar(50)).NotNull(),
+				Col("Source", TypeVarchar(100)).NotNull(),
+			).
+			Indexes(
+				Index("idx_logs_level", "Level, Source"),
+			)
+
+		diff, err := DiffSchema(ctx, db, d, declaredDiffCols)
+		require.NoError(t, err)
+		assert.True(t, diff.HasDrift)
+		require.Len(t, diff.ChangedIndexes, 1)
+		assert.Equal(t, "idx_logs_level", diff.ChangedIndexes[0].Name)
+		assert.Equal(t, "Level, Source", diff.ChangedIndexes[0].DeclaredColumns)
+		assert.Equal(t, "Level", diff.ChangedIndexes[0].LiveColumns)
+	})
+
+	t.Run("where_clause_mismatch", func(t *testing.T) {
+		// Create table with a partial index
+		table := NewTable("Alerts").
+			Columns(
+				AutoIncrCol("ID"),
+				Col("Severity", TypeVarchar(50)).NotNull(),
+				Col("Resolved", TypeInt()).NotNull(),
+			).
+			Indexes(
+				Index("idx_alerts_unresolved", "Severity").Where("Resolved = 0"),
+			)
+
+		for _, stmt := range table.CreateIfNotExistsSQL(d) {
+			_, err := db.ExecContext(ctx, stmt)
+			require.NoError(t, err)
+		}
+
+		// Declare the same index but with a different WHERE clause
+		declaredDiffWhere := NewTable("Alerts").
+			Columns(
+				AutoIncrCol("ID"),
+				Col("Severity", TypeVarchar(50)).NotNull(),
+				Col("Resolved", TypeInt()).NotNull(),
+			).
+			Indexes(
+				Index("idx_alerts_unresolved", "Severity").Where("Resolved = 1"),
+			)
+
+		diff, err := DiffSchema(ctx, db, d, declaredDiffWhere)
+		require.NoError(t, err)
+		assert.True(t, diff.HasDrift)
+		require.Len(t, diff.ChangedIndexes, 1)
+		assert.Equal(t, "idx_alerts_unresolved", diff.ChangedIndexes[0].Name)
+		assert.Equal(t, "Resolved = 1", diff.ChangedIndexes[0].DeclaredWhere)
+		assert.Equal(t, "Resolved = 0", diff.ChangedIndexes[0].LiveWhere)
+	})
+
+	t.Run("no_drift_when_index_properties_match", func(t *testing.T) {
+		// Create a unique partial index and verify no drift when declaration matches
+		table := NewTable("Sessions").
+			Columns(
+				AutoIncrCol("ID"),
+				Col("Token", TypeVarchar(255)).NotNull(),
+				Col("Active", TypeInt()).NotNull(),
+			).
+			Indexes(
+				UniqueIndex("idx_sessions_active_token", "Token").Where("Active = 1"),
+			)
+
+		for _, stmt := range table.CreateIfNotExistsSQL(d) {
+			_, err := db.ExecContext(ctx, stmt)
+			require.NoError(t, err)
+		}
+
+		diff, err := DiffSchema(ctx, db, d, table)
+		require.NoError(t, err)
+		assert.False(t, diff.HasDrift)
+		assert.Empty(t, diff.ChangedIndexes)
+		assert.Empty(t, diff.MissingIndexes)
+		assert.Empty(t, diff.ExtraIndexes)
+	})
+}
+
 func TestDiffSchemaWriteTo(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)

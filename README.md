@@ -368,10 +368,10 @@ data, _ := json.MarshalIndent(snap, "", "  ")
 
 // Human-readable text -- for side-by-side diffing
 fmt.Println(TasksTable.SnapshotString(dialect))
-// TABLE Tasks
-//   ID                   SERIAL PRIMARY KEY AUTO INCREMENT [immutable]
-//   Title                TEXT NOT NULL
-//   Description          TEXT
+// TABLE tasks
+//   id                   SERIAL PRIMARY KEY PRIMARY KEY AUTO INCREMENT NOT NULL [immutable]
+//   title                TEXT NOT NULL
+//   description          TEXT
 //   ...
 
 // Multi-table snapshot
@@ -403,7 +403,7 @@ fmt.Println("=== Live ===")
 fmt.Println(live.String())
 ```
 
-`LiveSnapshot` returns column names, types, nullability, defaults, and indexes.
+`LiveSnapshot` returns column names, types, nullability, defaults, and indexes (including each index's columns, uniqueness, and WHERE clause).
 
 ### Schema Validation
 
@@ -505,9 +505,10 @@ The diff is the representation that carries controls. It tells you -- or your CI
 diff, err := schema.DiffSchema(ctx, db, dialect, TasksTable)
 // diff.AddedColumns    -- in your code, not in the database
 // diff.RemovedColumns  -- in the database, not in your code
-// diff.ChangedColumns  -- nullability mismatches
+// diff.ChangedColumns  -- type, nullability, or default mismatches
 // diff.MissingIndexes  -- declared indexes not found live
 // diff.ExtraIndexes    -- live indexes not in your declaration
+// diff.ChangedIndexes  -- columns, uniqueness, or WHERE clause mismatches
 // diff.TableMissing    -- table doesn't exist at all
 // diff.HasDrift        -- true if any of the above are non-empty
 ```
@@ -674,11 +675,11 @@ All three implementations (`SQLiteDialect`, `PostgresDialect`, `MSSQLDialect`) s
 import _ "github.com/catgoose/chuck/driver/postgres"
 
 db, dialect, _ := chuck.OpenURL(ctx, "postgres://user:pass@localhost:5432/myapp?sslmode=disable")
-db, dialect, _ := chuck.OpenURL(ctx, "sqlite://:memory:")
+db, dialect, _ := chuck.OpenURL(ctx, "sqlite://:memory:")   // or sqlite:///:memory:
 db, dialect, _ := chuck.OpenURL(ctx, "sqlserver://user:pass@host:1433?database=erp")
 ```
 
-`OpenURL` detects the engine from the URL scheme and returns a raw `*sql.DB` plus the matching `Dialect`. Supported schemes: `postgres://` (`postgresql://`), `sqlite://` (`sqlite3://`), `sqlserver://` (`mssql://`).
+`OpenURL` detects the engine from the URL scheme and returns a raw `*sql.DB` plus the matching `Dialect`. Supported schemes: `postgres://` (`postgresql://`), `sqlite://` (`sqlite3://`), `sqlserver://` (`mssql://`). For SQLite, both two-slash (`sqlite://:memory:`) and three-slash (`sqlite:///:memory:`, `sqlite:///path/to/db`) forms are accepted.
 
 For SQLite, `OpenSQLite` opens a database with sensible defaults (WAL mode, 30s busy timeout, single-connection pool):
 
@@ -718,9 +719,9 @@ dbrepo.InsertInto("Users", "Name", "Email")          // "INSERT INTO Users (Name
 Dialect-aware variants quote identifiers:
 
 ```go
-dbrepo.ColumnsQ(d, "ID", "Name")                // `"ID", "Name"` (Postgres)
-dbrepo.SetClauseQ(d, "Name", "Email")           // `"Name" = @Name, "Email" = @Email`
-dbrepo.InsertIntoQ(d, "Users", "Name", "Email") // `INSERT INTO "Users" ("Name", "Email") VALUES (@Name, @Email)`
+dbrepo.ColumnsQ(d, "ID", "Name")                // `"id", "name"` (Postgres, normalized)
+dbrepo.SetClauseQ(d, "Name", "Email")           // `"name" = @Name, "email" = @Email`
+dbrepo.InsertIntoQ(d, "Users", "Name", "Email") // `INSERT INTO "users" ("name", "email") VALUES (@Name, @Email)`
 ```
 
 ### Bulk INSERT
@@ -827,7 +828,7 @@ query, args := sb.Build()
 countQuery, countArgs := sb.CountQuery()
 ```
 
-When a dialect is set, table names and dot-qualified column names are automatically quoted.
+When a dialect is set, table names and dot-qualified column names are automatically normalized and quoted.
 
 **JOINs** -- INNER JOIN and LEFT JOIN composition:
 
@@ -839,6 +840,14 @@ sb := dbrepo.NewSelect("Tasks", "Tasks.ID", "Tasks.Title", "Users.Name").
 	WithDialect(dialect)
 
 query, args := sb.Build()
+// Postgres (normalized to snake_case):
+// SELECT "tasks"."id", "tasks"."title", "users"."name"
+// FROM "tasks"
+// JOIN "users" ON Tasks.AssigneeID = Users.ID
+// LEFT JOIN "statuses" ON Tasks.StatusID = Statuses.ID
+// WHERE ...
+//
+// SQLite (casing preserved):
 // SELECT "Tasks"."ID", "Tasks"."Title", "Users"."Name"
 // FROM "Tasks"
 // JOIN "Users" ON Tasks.AssigneeID = Users.ID
@@ -846,7 +855,7 @@ query, args := sb.Build()
 // WHERE ...
 ```
 
-Table names in JOIN clauses are dialect-quoted. ON conditions pass through as raw SQL. `CountQuery()` includes JOINs automatically. Dot-qualified column names (`Table.Column`) are quoted per-part.
+Table names and dot-qualified column names are normalized and quoted per dialect. ON conditions pass through as raw SQL. `CountQuery()` includes JOINs automatically.
 
 ### UpdateBuilder
 
@@ -864,7 +873,7 @@ ub := dbrepo.NewUpdate("Tasks", "Title", "Status").
 	WithDialect(dialect)
 
 query, args := ub.Build()
-// UPDATE "tasks" SET "title" = @Title, "status" = @Status WHERE "deleted_at" IS NULL
+// UPDATE "tasks" SET "title" = @Title, "status" = @Status WHERE DeletedAt IS NULL
 ```
 
 Chain `.Returning("id")` for Postgres/SQLite RETURNING clause support (no-op on MSSQL).
@@ -879,7 +888,7 @@ db := dbrepo.NewDelete("Tasks").
 	WithDialect(dialect)
 
 query, args := db.Build()
-// DELETE FROM "tasks" WHERE "deleted_at" IS NULL AND "status" = @Status
+// DELETE FROM "tasks" WHERE DeletedAt IS NULL AND Status = @Status
 ```
 
 Same pattern -- `.Where()`, `.WithDialect()`, `.Returning()`, `.Build()`.

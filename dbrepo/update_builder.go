@@ -51,7 +51,7 @@ func (u *UpdateBuilder) Build() (query string, args []any) {
 	tableName := u.table
 	var setClause string
 	if u.dialect != nil {
-		tableName = u.dialect.QuoteIdentifier(u.table)
+		tableName = u.dialect.QuoteIdentifier(u.dialect.NormalizeIdentifier(u.table))
 		setClause = SetClauseQ(u.dialect, u.cols...)
 	} else {
 		setClause = SetClause(u.cols...)

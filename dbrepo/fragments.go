@@ -67,7 +67,7 @@ func InsertInto(table string, cols ...string) string {
 func ColumnsQ(d chuck.Identifier, cols ...string) string {
 	quoted := make([]string, len(cols))
 	for i, c := range cols {
-		quoted[i] = d.QuoteIdentifier(c)
+		quoted[i] = d.QuoteIdentifier(d.NormalizeIdentifier(c))
 	}
 	return strings.Join(quoted, ", ")
 }
@@ -78,7 +78,7 @@ func ColumnsQ(d chuck.Identifier, cols ...string) string {
 func SetClauseQ(d chuck.Identifier, cols ...string) string {
 	parts := make([]string, len(cols))
 	for i, c := range cols {
-		parts[i] = fmt.Sprintf("%s = @%s", d.QuoteIdentifier(c), c)
+		parts[i] = fmt.Sprintf("%s = @%s", d.QuoteIdentifier(d.NormalizeIdentifier(c)), c)
 	}
 	return strings.Join(parts, ", ")
 }
@@ -89,7 +89,7 @@ func SetClauseQ(d chuck.Identifier, cols ...string) string {
 //	  `INSERT INTO "Users" ("Name", "Email") VALUES (@Name, @Email)` (Postgres/SQLite)
 func InsertIntoQ(d chuck.Identifier, table string, cols ...string) string {
 	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-		d.QuoteIdentifier(table), ColumnsQ(d, cols...), Placeholders(cols...))
+		d.QuoteIdentifier(d.NormalizeIdentifier(table)), ColumnsQ(d, cols...), Placeholders(cols...))
 }
 
 // BulkInsertInto builds a multi-row INSERT INTO … VALUES … statement with
@@ -110,10 +110,10 @@ func InsertIntoQ(d chuck.Identifier, table string, cols ...string) string {
 //	BulkInsertInto(pgDialect, "users", []string{"name", "email"}, 3)
 //	// => INSERT INTO "users" ("name", "email") VALUES ($1, $2), ($3, $4), ($5, $6)
 func BulkInsertInto(d chuck.Dialect, table string, cols []string, rowCount int) string {
-	quotedTable := d.QuoteIdentifier(table)
+	quotedTable := d.QuoteIdentifier(d.NormalizeIdentifier(table))
 	quotedCols := make([]string, len(cols))
 	for i, c := range cols {
-		quotedCols[i] = d.QuoteIdentifier(c)
+		quotedCols[i] = d.QuoteIdentifier(d.NormalizeIdentifier(c))
 	}
 	colList := strings.Join(quotedCols, ", ")
 
@@ -153,7 +153,7 @@ func UpsertInto(d chuck.Dialect, table string, conflictCols []string, cols ...st
 func UpsertIntoQ(d chuck.Dialect, table string, conflictCols []string, cols ...string) string {
 	updateCols := nonConflictCols(cols, conflictCols)
 	updateSet := upsertSetClauseQ(d, updateCols)
-	return d.Upsert(table, ColumnsQ(d, cols...), Placeholders(cols...), ColumnsQ(d, conflictCols...), updateSet)
+	return d.Upsert(d.NormalizeIdentifier(table), ColumnsQ(d, cols...), Placeholders(cols...), ColumnsQ(d, conflictCols...), updateSet)
 }
 
 // nonConflictCols returns columns from cols that are not in conflictCols.
@@ -187,7 +187,7 @@ func upsertSetClauseQ(d chuck.Dialect, cols []string) string {
 	ref := excludedRef(d)
 	parts := make([]string, len(cols))
 	for i, c := range cols {
-		qc := d.QuoteIdentifier(c)
+		qc := d.QuoteIdentifier(d.NormalizeIdentifier(c))
 		parts[i] = fmt.Sprintf("%s = %s.%s", qc, ref, qc)
 	}
 	return strings.Join(parts, ", ")

@@ -89,7 +89,7 @@ func (s *SelectBuilder) Build() (query string, args []any) {
 	tableName := s.table
 	cols := s.cols
 	if s.dialect != nil {
-		tableName = s.dialect.QuoteIdentifier(s.table)
+		tableName = s.dialect.QuoteIdentifier(s.dialect.NormalizeIdentifier(s.table))
 		cols = quoteDotQualifiedColumns(s.dialect, s.cols)
 	}
 	parts = append(parts, fmt.Sprintf("SELECT %s FROM %s", cols, tableName))
@@ -97,7 +97,7 @@ func (s *SelectBuilder) Build() (query string, args []any) {
 	for _, j := range s.joins {
 		jt := j.table
 		if s.dialect != nil {
-			jt = s.dialect.QuoteIdentifier(j.table)
+			jt = s.dialect.QuoteIdentifier(s.dialect.NormalizeIdentifier(j.table))
 		}
 		parts = append(parts, fmt.Sprintf("%s %s ON %s", j.joinType, jt, j.condition))
 	}
@@ -133,14 +133,14 @@ func (s *SelectBuilder) CountQuery() (query string, args []any) {
 	var parts []string
 	tableName := s.table
 	if s.dialect != nil {
-		tableName = s.dialect.QuoteIdentifier(s.table)
+		tableName = s.dialect.QuoteIdentifier(s.dialect.NormalizeIdentifier(s.table))
 	}
 	parts = append(parts, fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName))
 
 	for _, j := range s.joins {
 		jt := j.table
 		if s.dialect != nil {
-			jt = s.dialect.QuoteIdentifier(j.table)
+			jt = s.dialect.QuoteIdentifier(s.dialect.NormalizeIdentifier(j.table))
 		}
 		parts = append(parts, fmt.Sprintf("%s %s ON %s", j.joinType, jt, j.condition))
 	}
@@ -163,7 +163,7 @@ func quoteDotQualifiedColumns(d chuck.Identifier, cols string) string {
 		if dotIdx := strings.Index(col, "."); dotIdx >= 0 {
 			table := col[:dotIdx]
 			column := col[dotIdx+1:]
-			result[i] = d.QuoteIdentifier(table) + "." + d.QuoteIdentifier(column)
+			result[i] = d.QuoteIdentifier(d.NormalizeIdentifier(table)) + "." + d.QuoteIdentifier(d.NormalizeIdentifier(column))
 		} else {
 			result[i] = col
 		}

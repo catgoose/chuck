@@ -148,7 +148,7 @@ func TestUpsertIntoQ(t *testing.T) {
 	t.Run("Postgres", func(t *testing.T) {
 		d, _ := chuck.New(chuck.Postgres)
 		result := UpsertIntoQ(d, "Users", []string{"Email"}, "Email", "Name", "Age")
-		expected := `INSERT INTO "Users" ("Email", "Name", "Age") VALUES (@Email, @Name, @Age) ON CONFLICT ("Email") DO UPDATE SET "Name" = EXCLUDED."Name", "Age" = EXCLUDED."Age"`
+		expected := `INSERT INTO "users" ("email", "name", "age") VALUES (@Email, @Name, @Age) ON CONFLICT ("email") DO UPDATE SET "name" = EXCLUDED."name", "age" = EXCLUDED."age"`
 		assert.Equal(t, expected, result)
 	})
 

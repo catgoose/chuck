@@ -37,21 +37,21 @@ func ExampleInsertIntoQ() {
 	d, _ := chuck.New(chuck.Postgres)
 	fmt.Println(dbrepo.InsertIntoQ(d, "Users", "Name", "Email"))
 	// Output:
-	// INSERT INTO "Users" ("Name", "Email") VALUES (@Name, @Email)
+	// INSERT INTO "users" ("name", "email") VALUES (@Name, @Email)
 }
 
 func ExampleColumnsQ() {
 	d, _ := chuck.New(chuck.Postgres)
 	fmt.Println(dbrepo.ColumnsQ(d, "ID", "Name", "Email"))
 	// Output:
-	// "ID", "Name", "Email"
+	// "id", "name", "email"
 }
 
 func ExampleSetClauseQ() {
 	d, _ := chuck.New(chuck.Postgres)
 	fmt.Println(dbrepo.SetClauseQ(d, "Name", "Email"))
 	// Output:
-	// "Name" = @Name, "Email" = @Email
+	// "name" = @Name, "email" = @Email
 }
 
 func ExampleNewWhere() {
@@ -245,7 +245,7 @@ func ExampleUpsertIntoQ() {
 	d, _ := chuck.New(chuck.Postgres)
 	fmt.Println(dbrepo.UpsertIntoQ(d, "Users", []string{"Email"}, "Email", "Name", "Age"))
 	// Output:
-	// INSERT INTO "Users" ("Email", "Name", "Age") VALUES (@Email, @Name, @Age) ON CONFLICT ("Email") DO UPDATE SET "Name" = EXCLUDED."Name", "Age" = EXCLUDED."Age"
+	// INSERT INTO "users" ("email", "name", "age") VALUES (@Email, @Name, @Age) ON CONFLICT ("email") DO UPDATE SET "name" = EXCLUDED."name", "age" = EXCLUDED."age"
 }
 
 func ExampleBuildOrderByClause() {

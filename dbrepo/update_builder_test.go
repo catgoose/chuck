@@ -39,7 +39,7 @@ func TestUpdateBuilder(t *testing.T) {
 		q, args := NewUpdate("Users", "Name", "Email").
 			WithDialect(d).
 			Build()
-		assert.Equal(t, `UPDATE "Users" SET "Name" = @Name, "Email" = @Email`, q)
+		assert.Equal(t, `UPDATE "users" SET "name" = @Name, "email" = @Email`, q)
 		assert.Empty(t, args)
 	})
 
@@ -67,7 +67,7 @@ func TestUpdateBuilder(t *testing.T) {
 			WithDialect(d).
 			Returning("ID", "Name").
 			Build()
-		assert.Equal(t, `UPDATE "Users" SET "Name" = @Name RETURNING ID, Name`, q)
+		assert.Equal(t, `UPDATE "users" SET "name" = @Name RETURNING ID, Name`, q)
 	})
 
 	t.Run("returning_sqlite", func(t *testing.T) {
@@ -97,7 +97,7 @@ func TestUpdateBuilder(t *testing.T) {
 			Where(w).
 			Returning("ID", "Name", "Email").
 			Build()
-		assert.Equal(t, `UPDATE "Users" SET "Name" = @Name, "Email" = @Email WHERE ID = @ID RETURNING ID, Name, Email`, q)
+		assert.Equal(t, `UPDATE "users" SET "name" = @Name, "email" = @Email WHERE ID = @ID RETURNING ID, Name, Email`, q)
 		assert.Len(t, args, 1)
 	})
 }

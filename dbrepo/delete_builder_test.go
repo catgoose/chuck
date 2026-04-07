@@ -39,7 +39,7 @@ func TestDeleteBuilder(t *testing.T) {
 		q, _ := NewDelete("Users").
 			WithDialect(d).
 			Build()
-		assert.Equal(t, `DELETE FROM "Users"`, q)
+		assert.Equal(t, `DELETE FROM "users"`, q)
 	})
 
 	t.Run("with_dialect_mssql", func(t *testing.T) {
@@ -64,7 +64,7 @@ func TestDeleteBuilder(t *testing.T) {
 			WithDialect(d).
 			Returning("ID").
 			Build()
-		assert.Equal(t, `DELETE FROM "Users" RETURNING ID`, q)
+		assert.Equal(t, `DELETE FROM "users" RETURNING ID`, q)
 	})
 
 	t.Run("returning_sqlite", func(t *testing.T) {
@@ -93,7 +93,7 @@ func TestDeleteBuilder(t *testing.T) {
 			Where(w).
 			Returning("ID").
 			Build()
-		assert.Equal(t, `DELETE FROM "Users" WHERE ID = @ID RETURNING ID`, q)
+		assert.Equal(t, `DELETE FROM "users" WHERE ID = @ID RETURNING ID`, q)
 		assert.Len(t, args, 1)
 	})
 }

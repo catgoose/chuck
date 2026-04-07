@@ -193,4 +193,46 @@ func TestSelectBuilder(t *testing.T) {
 		assert.Equal(t, "SELECT Tasks.ID, Users.Name FROM Tasks JOIN Users ON Tasks.AssigneeID = Users.ID", sql)
 		assert.Empty(t, args)
 	})
+
+	t.Run("postgres_normalizes_pascal_case_table", func(t *testing.T) {
+		d := chuck.PostgresDialect{}
+		sql, _ := NewSelect("Users", "ID", "Name").
+			WithDialect(d).
+			Build()
+		assert.Equal(t, `SELECT ID, Name FROM "users"`, sql)
+	})
+
+	t.Run("postgres_normalizes_pascal_case_columns", func(t *testing.T) {
+		d := chuck.PostgresDialect{}
+		sql, _ := NewSelect("Users", "Users.TaskID", "Users.UserName").
+			WithDialect(d).
+			Build()
+		assert.Equal(t, `SELECT "users"."task_id", "users"."user_name" FROM "users"`, sql)
+	})
+
+	t.Run("postgres_normalizes_join_table", func(t *testing.T) {
+		d := chuck.PostgresDialect{}
+		sql, _ := NewSelect("Tasks", "Tasks.ID").
+			Join("Users", "Tasks.assignee_id = Users.id").
+			WithDialect(d).
+			Build()
+		assert.Equal(t, `SELECT "tasks"."id" FROM "tasks" JOIN "users" ON Tasks.assignee_id = Users.id`, sql)
+	})
+
+	t.Run("postgres_normalizes_count_query", func(t *testing.T) {
+		d := chuck.PostgresDialect{}
+		sql, _ := NewSelect("Users", "ID").
+			WithDialect(d).
+			CountQuery()
+		assert.Equal(t, `SELECT COUNT(*) FROM "users"`, sql)
+	})
+
+	t.Run("postgres_normalizes_count_query_with_join", func(t *testing.T) {
+		d := chuck.PostgresDialect{}
+		sql, _ := NewSelect("Tasks", "Tasks.ID").
+			Join("Users", "Tasks.assignee_id = Users.id").
+			WithDialect(d).
+			CountQuery()
+		assert.Equal(t, `SELECT COUNT(*) FROM "tasks" JOIN "users" ON Tasks.assignee_id = Users.id`, sql)
+	})
 }

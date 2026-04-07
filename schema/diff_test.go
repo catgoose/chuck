@@ -555,3 +555,121 @@ func TestWriteDiffsJSON(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, parsed, 1)
 }
+
+func TestNormalizeTypePostgresAliases(t *testing.T) {
+	tests := []struct {
+		name     string
+		declared string
+		live     string
+	}{
+		{
+			name:     "varchar with length",
+			declared: "VARCHAR(255)",
+			live:     "CHARACTER VARYING(255)",
+		},
+		{
+			name:     "varchar without length",
+			declared: "VARCHAR",
+			live:     "CHARACTER VARYING",
+		},
+		{
+			name:     "timestamptz alias",
+			declared: "TIMESTAMPTZ",
+			live:     "TIMESTAMP WITH TIME ZONE",
+		},
+		{
+			name:     "numeric with precision and scale",
+			declared: "NUMERIC(10,2)",
+			live:     "NUMERIC(10,2)",
+		},
+		{
+			name:     "decimal maps to numeric",
+			declared: "DECIMAL(10,2)",
+			live:     "NUMERIC(10,2)",
+		},
+		{
+			name:     "boolean alias",
+			declared: "BOOL",
+			live:     "BOOLEAN",
+		},
+		{
+			name:     "integer stays integer",
+			declared: "INTEGER",
+			live:     "INTEGER",
+		},
+		{
+			name:     "serial maps to integer",
+			declared: "SERIAL",
+			live:     "INTEGER",
+		},
+		{
+			name:     "bigint stays bigint",
+			declared: "BIGINT",
+			live:     "BIGINT",
+		},
+		{
+			name:     "double precision stays",
+			declared: "DOUBLE PRECISION",
+			live:     "DOUBLE PRECISION",
+		},
+		{
+			name:     "text stays text",
+			declared: "TEXT",
+			live:     "TEXT",
+		},
+		{
+			name:     "char with length",
+			declared: "CHAR(10)",
+			live:     "CHARACTER(10)",
+		},
+		{
+			name:     "int alias",
+			declared: "INT",
+			live:     "INTEGER",
+		},
+		{
+			name:     "bigserial maps to bigint",
+			declared: "BIGSERIAL",
+			live:     "BIGINT",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, normalizeType(tt.declared), normalizeType(tt.live),
+				"normalizeType(%q) should equal normalizeType(%q)", tt.declared, tt.live)
+		})
+	}
+}
+
+func TestNormalizeTypePostgresDialectTypes(t *testing.T) {
+	// Verify that the types produced by PostgresDialect methods normalize to the
+	// same value as what format_type() returns from a live Postgres database.
+	// format_type() returns lowercase canonical types; the live query UPPERs them.
+	d := chuck.PostgresDialect{}
+
+	tests := []struct {
+		name       string
+		declared   string // what the dialect produces
+		formatType string // what UPPER(format_type()) would return from pg_attribute
+	}{
+		{"varchar 255", d.VarcharType(255), "CHARACTER VARYING(255)"},
+		{"timestamp", d.TimestampType(), "TIMESTAMP WITH TIME ZONE"},
+		{"decimal 10,2", d.DecimalType(10, 2), "NUMERIC(10,2)"},
+		{"text", d.TextType(), "TEXT"},
+		{"integer", d.IntType(), "INTEGER"},
+		{"boolean", d.BoolType(), "BOOLEAN"},
+		{"bigint", d.BigIntType(), "BIGINT"},
+		{"float", d.FloatType(), "DOUBLE PRECISION"},
+		{"uuid", d.UUIDType(), "UUID"},
+		{"json", d.JSONType(), "JSONB"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, normalizeType(tt.declared), normalizeType(tt.formatType),
+				"declared %q should match live format_type %q after normalization",
+				tt.declared, tt.formatType)
+		})
+	}
+}

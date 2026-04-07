@@ -83,7 +83,7 @@ func queryColumns(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName st
 	case chuck.SQLite:
 		query = `SELECT name, type, CASE WHEN "notnull" = 1 OR pk = 1 THEN 'NO' ELSE 'YES' END AS nullable, COALESCE(dflt_value, '') AS dflt FROM pragma_table_info(?)`
 	case chuck.Postgres:
-		query = `SELECT column_name, UPPER(data_type), is_nullable, COALESCE(column_default, '') FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 ORDER BY ordinal_position`
+		query = `SELECT c.column_name, UPPER(format_type(a.atttypid, a.atttypmod)), c.is_nullable, COALESCE(c.column_default, '') FROM information_schema.columns c JOIN pg_attribute a ON a.attname = c.column_name JOIN pg_class t ON t.relname = c.table_name AND t.oid = a.attrelid WHERE c.table_schema = 'public' AND c.table_name = $1 AND a.attnum > 0 AND NOT a.attisdropped ORDER BY c.ordinal_position`
 	case chuck.MSSQL:
 		query = `SELECT COLUMN_NAME, UPPER(DATA_TYPE), IS_NULLABLE, COALESCE(COLUMN_DEFAULT, '') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @p1 ORDER BY ORDINAL_POSITION`
 	default:

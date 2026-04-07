@@ -97,6 +97,87 @@ func TestDiffSchema(t *testing.T) {
 		assert.False(t, diff.ChangedColumns[0].LiveNullable) // NOT NULL in DB = not nullable
 	})
 
+	t.Run("type_mismatch", func(t *testing.T) {
+		// Declare Name as INTEGER, but it's TEXT in the DB
+		typeMismatch := NewTable("Items").
+			Columns(
+				AutoIncrCol("ID"),
+				Col("Name", TypeInt()).NotNull(),
+				Col("Status", TypeVarchar(50)).NotNull().Default("'active'"),
+			)
+
+		diff, err := DiffSchema(ctx, db, d, typeMismatch)
+		require.NoError(t, err)
+		assert.True(t, diff.HasDrift)
+		require.Len(t, diff.ChangedColumns, 1)
+		assert.Equal(t, "Name", diff.ChangedColumns[0].Name)
+		assert.Contains(t, diff.ChangedColumns[0].Mismatches, "type")
+		assert.Equal(t, "INTEGER", diff.ChangedColumns[0].DeclaredType)
+		assert.Equal(t, "TEXT", diff.ChangedColumns[0].LiveType)
+	})
+
+	t.Run("default_mismatch", func(t *testing.T) {
+		// Declare Status with a different default than what's in DB
+		defaultMismatch := NewTable("Items").
+			Columns(
+				AutoIncrCol("ID"),
+				Col("Name", TypeString(255)).NotNull(),
+				Col("Status", TypeVarchar(50)).NotNull().Default("'pending'"),
+			)
+
+		diff, err := DiffSchema(ctx, db, d, defaultMismatch)
+		require.NoError(t, err)
+		assert.True(t, diff.HasDrift)
+		require.Len(t, diff.ChangedColumns, 1)
+		assert.Equal(t, "Status", diff.ChangedColumns[0].Name)
+		assert.Contains(t, diff.ChangedColumns[0].Mismatches, "default")
+		assert.Equal(t, "'pending'", diff.ChangedColumns[0].DeclaredDefault)
+	})
+
+	t.Run("multiple_mismatches", func(t *testing.T) {
+		// Name: wrong type. Status: wrong nullability + wrong default.
+		multi := NewTable("Items").
+			Columns(
+				AutoIncrCol("ID"),
+				Col("Name", TypeInt()).NotNull(),
+				Col("Status", TypeVarchar(50)).Default("'pending'"),
+			)
+
+		diff, err := DiffSchema(ctx, db, d, multi)
+		require.NoError(t, err)
+		assert.True(t, diff.HasDrift)
+		require.Len(t, diff.ChangedColumns, 2)
+
+		// Name should have type mismatch
+		nameDiff := diff.ChangedColumns[0]
+		assert.Equal(t, "Name", nameDiff.Name)
+		assert.Contains(t, nameDiff.Mismatches, "type")
+
+		// Status should have nullability + default mismatches
+		statusDiff := diff.ChangedColumns[1]
+		assert.Equal(t, "Status", statusDiff.Name)
+		assert.Contains(t, statusDiff.Mismatches, "nullability")
+		assert.Contains(t, statusDiff.Mismatches, "default")
+	})
+
+	t.Run("autoincr_type_no_false_positive", func(t *testing.T) {
+		// Auto-increment columns have compound types like "INTEGER PRIMARY KEY AUTOINCREMENT"
+		// but live DB reports just "INTEGER". This should NOT be a type mismatch.
+		exact := NewTable("Items").
+			Columns(
+				AutoIncrCol("ID"),
+				Col("Name", TypeString(255)).NotNull(),
+				Col("Status", TypeVarchar(50)).NotNull().Default("'active'"),
+			).
+			Indexes(
+				Index("idx_items_name", "Name"),
+			)
+
+		diff, err := DiffSchema(ctx, db, d, exact)
+		require.NoError(t, err)
+		assert.False(t, diff.HasDrift, "expected no drift, got changed columns: %v", diff.ChangedColumns)
+	})
+
 	t.Run("missing_table", func(t *testing.T) {
 		missing := NewTable("Nonexistent").
 			Columns(AutoIncrCol("ID"))

@@ -27,11 +27,14 @@ type SchemaDiff struct {
 // ColumnDiff describes a column that exists in both declared and live schemas
 // but has mismatched properties.
 type ColumnDiff struct {
-	Name            string `json:"name"`
-	DeclaredNotNull bool   `json:"declared_not_null"`
-	LiveNullable    bool   `json:"live_nullable"`
-	DeclaredType    string `json:"declared_type,omitempty"`
-	LiveType        string `json:"live_type,omitempty"`
+	Name            string   `json:"name"`
+	DeclaredNotNull bool     `json:"declared_not_null"`
+	LiveNullable    bool     `json:"live_nullable"`
+	DeclaredType    string   `json:"declared_type,omitempty"`
+	LiveType        string   `json:"live_type,omitempty"`
+	DeclaredDefault string   `json:"declared_default,omitempty"`
+	LiveDefault     string   `json:"live_default,omitempty"`
+	Mismatches      []string `json:"mismatches,omitempty"`
 }
 
 // DiffSchema compares a declared table against the live database and returns
@@ -83,14 +86,29 @@ func DiffSchema(ctx context.Context, db *sql.DB, d chuck.Dialect, td *TableDef) 
 		if !ok {
 			continue
 		}
+
+		cd := ColumnDiff{
+			Name:            dc.Name,
+			DeclaredNotNull: dc.NotNull,
+			LiveNullable:    lc.Nullable,
+			DeclaredType:    dc.Type,
+			LiveType:        lc.Type,
+			DeclaredDefault: dc.Default,
+			LiveDefault:     lc.Default,
+		}
+
 		if dc.NotNull != !lc.Nullable {
-			diff.ChangedColumns = append(diff.ChangedColumns, ColumnDiff{
-				Name:            dc.Name,
-				DeclaredNotNull: dc.NotNull,
-				LiveNullable:    lc.Nullable,
-				DeclaredType:    dc.Type,
-				LiveType:        lc.Type,
-			})
+			cd.Mismatches = append(cd.Mismatches, "nullability")
+		}
+		if normalizeType(dc.Type) != normalizeType(lc.Type) {
+			cd.Mismatches = append(cd.Mismatches, "type")
+		}
+		if normalizeDefault(dc.Default) != normalizeDefault(lc.Default) {
+			cd.Mismatches = append(cd.Mismatches, "default")
+		}
+
+		if len(cd.Mismatches) > 0 {
+			diff.ChangedColumns = append(diff.ChangedColumns, cd)
 		}
 	}
 
@@ -169,6 +187,39 @@ func WriteDiffsTo(diffs []*SchemaDiff, w io.Writer) (int64, error) {
 	data = append(data, '\n')
 	n, err := w.Write(data)
 	return int64(n), err
+}
+
+// normalizeType strips constraint keywords from a declared type string so that
+// it can be compared against the base data type reported by a live database.
+// For example, "INTEGER PRIMARY KEY AUTOINCREMENT" becomes "INTEGER", and
+// "SERIAL PRIMARY KEY" becomes "SERIAL".
+func normalizeType(s string) string {
+	s = strings.TrimSpace(s)
+	upper := strings.ToUpper(s)
+
+	// Remove known constraint suffixes that are embedded in compound type declarations.
+	for _, kw := range []string{
+		"PRIMARY KEY AUTOINCREMENT",
+		"PRIMARY KEY IDENTITY(1,1)",
+		"PRIMARY KEY",
+		"AUTOINCREMENT",
+		"NOT NULL",
+	} {
+		upper = strings.ReplaceAll(upper, kw, "")
+	}
+	return strings.TrimSpace(upper)
+}
+
+// normalizeDefault normalizes a default value for comparison. Different databases
+// may wrap defaults differently (e.g., parentheses, quotes). This trims whitespace,
+// removes outer parentheses, and lowercases to reduce false positives.
+func normalizeDefault(s string) string {
+	s = strings.TrimSpace(s)
+	// Strip outer parentheses (common in some databases, e.g., SQLite wraps defaults)
+	for len(s) >= 2 && s[0] == '(' && s[len(s)-1] == ')' {
+		s = s[1 : len(s)-1]
+	}
+	return strings.ToLower(s)
 }
 
 // WriteDiffsJSON writes multiple diffs as a JSON array to a file path.

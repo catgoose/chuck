@@ -309,6 +309,49 @@ func TestEnsureDryRunWithDiffOutput(t *testing.T) {
 	assert.Greater(t, buf.Len(), 0)
 }
 
+func TestEnsureErrorChangedIndexes(t *testing.T) {
+	e := &EnsureError{
+		Diffs: []*SchemaDiff{
+			{
+				Table: "Items",
+				ChangedIndexes: []IndexDiff{
+					{Name: "idx_items_name"},
+					{Name: "idx_items_status"},
+				},
+				HasDrift: true,
+			},
+		},
+	}
+	msg := e.Error()
+	assert.Contains(t, msg, "schema drift detected")
+	assert.Contains(t, msg, "changed index(es)")
+	assert.Contains(t, msg, "idx_items_name")
+	assert.Contains(t, msg, "idx_items_status")
+}
+
+func TestEnsureErrorChangedIndexesOnly(t *testing.T) {
+	// When ChangedIndexes is the only drift, the error should still report it
+	e := &EnsureError{
+		Diffs: []*SchemaDiff{
+			{
+				Table: "Orders",
+				ChangedIndexes: []IndexDiff{
+					{
+						Name:            "idx_orders_total",
+						DeclaredColumns: "total",
+						LiveColumns:     "total, tax",
+						DeclaredUnique:  true,
+						LiveUnique:      false,
+					},
+				},
+				HasDrift: true,
+			},
+		},
+	}
+	msg := e.Error()
+	assert.Equal(t, `schema drift detected: table "Orders": 1 changed index(es): idx_orders_total`, msg)
+}
+
 func TestEnsureDefaultIsStrict(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)

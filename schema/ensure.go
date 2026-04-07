@@ -121,6 +121,13 @@ func (e *EnsureError) Error() string {
 		if len(d.ExtraIndexes) > 0 {
 			issues = append(issues, fmt.Sprintf("%d extra index(es): %s", len(d.ExtraIndexes), strings.Join(d.ExtraIndexes, ", ")))
 		}
+		if len(d.ChangedIndexes) > 0 {
+			names := make([]string, len(d.ChangedIndexes))
+			for i, idx := range d.ChangedIndexes {
+				names[i] = idx.Name
+			}
+			issues = append(issues, fmt.Sprintf("%d changed index(es): %s", len(d.ChangedIndexes), strings.Join(names, ", ")))
+		}
 		parts = append(parts, fmt.Sprintf("table %q: %s", d.Table, strings.Join(issues, "; ")))
 	}
 	return fmt.Sprintf("schema drift detected: %s", strings.Join(parts, ", "))

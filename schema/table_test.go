@@ -281,6 +281,36 @@ func TestColumnDDL(t *testing.T) {
 		assert.Contains(t, ddl, `REFERENCES "tasks"("id") ON DELETE CASCADE ON UPDATE SET NULL`)
 	})
 
+	t.Run("primary_key_postgres", func(t *testing.T) {
+		c := Col("ID", TypeInt()).PrimaryKey()
+		ddl := c.ddl(d)
+		assert.Contains(t, ddl, "PRIMARY KEY")
+		assert.Equal(t, `"id" INTEGER PRIMARY KEY`, ddl)
+	})
+
+	t.Run("primary_key_sqlite", func(t *testing.T) {
+		c := Col("ID", TypeInt()).PrimaryKey()
+		sq := chuck.SQLiteDialect{}
+		ddl := c.ddl(sq)
+		assert.Contains(t, ddl, "PRIMARY KEY")
+		assert.Equal(t, `"ID" INTEGER PRIMARY KEY`, ddl)
+	})
+
+	t.Run("primary_key_mssql", func(t *testing.T) {
+		c := Col("ID", TypeInt()).PrimaryKey()
+		ms := chuck.MSSQLDialect{}
+		ddl := c.ddl(ms)
+		assert.Contains(t, ddl, "PRIMARY KEY")
+		assert.Equal(t, `[ID] INT PRIMARY KEY`, ddl)
+	})
+
+	t.Run("primary_key_not_null", func(t *testing.T) {
+		c := Col("ID", TypeInt()).PrimaryKey().NotNull()
+		ddl := c.ddl(d)
+		assert.Contains(t, ddl, "PRIMARY KEY")
+		assert.Contains(t, ddl, "NOT NULL")
+	})
+
 	t.Run("auto_increment", func(t *testing.T) {
 		c := AutoIncrCol("ID")
 		ddl := c.ddl(d)

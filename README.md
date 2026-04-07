@@ -1,5 +1,7 @@
 # chuck
 
+![image](https://github.com/catgoose/screenshots/blob/main/chuck/chuck.jpg)
+
 <!--toc:start-->
 
 - [chuck](#chuck)

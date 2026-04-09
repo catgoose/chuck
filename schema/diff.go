@@ -308,7 +308,7 @@ func normalizePostgresAlias(s string) string {
 
 // splitTypeParams splits a type string like "VARCHAR(255)" into ("VARCHAR", "255")
 // or "INTEGER" into ("INTEGER", "").
-func splitTypeParams(s string) (string, string) {
+func splitTypeParams(s string) (base, params string) {
 	idx := strings.IndexByte(s, '(')
 	if idx < 0 {
 		return s, ""

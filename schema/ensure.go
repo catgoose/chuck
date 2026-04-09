@@ -249,9 +249,11 @@ func ensureDryRun(ctx context.Context, db *sql.DB, d chuck.Dialect, tables []*Ta
 
 func writeDiffs(diffs []*SchemaDiff, cfg *ensureConfig) {
 	if cfg.diffOutput != nil {
-		WriteDiffsTo(diffs, cfg.diffOutput) //nolint:errcheck
+		//nolint:errcheck // diff output is best-effort; callers opting into cfg.diffOutput accept silent failure
+		WriteDiffsTo(diffs, cfg.diffOutput)
 	}
 	if cfg.diffPath != "" {
-		WriteDiffsJSON(diffs, cfg.diffPath) //nolint:errcheck
+		//nolint:errcheck // diff output is best-effort; callers opting into cfg.diffPath accept silent failure
+		WriteDiffsJSON(diffs, cfg.diffPath)
 	}
 }

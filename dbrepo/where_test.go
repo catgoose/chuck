@@ -162,6 +162,155 @@ func TestWhereTraitFiltersCustomColumns(t *testing.T) {
 	})
 }
 
+func TestWhereTraitFiltersInvalidOverrides(t *testing.T) {
+	// invalidOverrides covers the representative malicious / malformed
+	// inputs the helpers must reject in favor of their default column.
+	invalidOverrides := []string{
+		"Status; DROP TABLE users--",
+		"1bad",
+		"a b",
+		"users.name desc",
+	}
+
+	t.Run("not_deleted_invalid_falls_back", func(t *testing.T) {
+		for _, override := range invalidOverrides {
+			w := NewWhere().NotDeleted(override)
+			assert.Equal(t, "WHERE DeletedAt IS NULL", w.String(), "override=%q", override)
+		}
+	})
+
+	t.Run("not_deleted_valid_still_works", func(t *testing.T) {
+		w := NewWhere().NotDeleted("deleted_at")
+		assert.Equal(t, "WHERE deleted_at IS NULL", w.String())
+	})
+
+	t.Run("not_expired_invalid_falls_back", func(t *testing.T) {
+		for _, override := range invalidOverrides {
+			w := NewWhere().NotExpired(override)
+			assert.Contains(t, w.String(), "ExpiresAt IS NULL OR ExpiresAt > CURRENT_TIMESTAMP", "override=%q", override)
+		}
+	})
+
+	t.Run("not_expired_valid_still_works", func(t *testing.T) {
+		w := NewWhere().NotExpired("expires_at")
+		assert.Contains(t, w.String(), "expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP")
+	})
+
+	t.Run("has_status_invalid_falls_back", func(t *testing.T) {
+		for _, override := range invalidOverrides {
+			w := NewWhere().HasStatus("active", override)
+			assert.Contains(t, w.String(), "Status = @Status", "override=%q", override)
+			assert.NotContains(t, w.String(), "DROP TABLE", "override=%q", override)
+		}
+	})
+
+	t.Run("has_status_valid_still_works", func(t *testing.T) {
+		w := NewWhere().HasStatus("active", "status")
+		assert.Contains(t, w.String(), "status = @Status")
+	})
+
+	t.Run("is_root_invalid_falls_back", func(t *testing.T) {
+		for _, override := range invalidOverrides {
+			w := NewWhere().IsRoot(override)
+			assert.Equal(t, "WHERE ParentID IS NULL", w.String(), "override=%q", override)
+		}
+	})
+
+	t.Run("is_root_valid_still_works", func(t *testing.T) {
+		w := NewWhere().IsRoot("parent_id")
+		assert.Equal(t, "WHERE parent_id IS NULL", w.String())
+	})
+
+	t.Run("has_parent_invalid_falls_back", func(t *testing.T) {
+		for _, override := range invalidOverrides {
+			w := NewWhere().HasParent(42, override)
+			assert.Contains(t, w.String(), "ParentID = @ParentID", "override=%q", override)
+			assert.NotContains(t, w.String(), "DROP TABLE", "override=%q", override)
+		}
+	})
+
+	t.Run("has_parent_valid_still_works", func(t *testing.T) {
+		w := NewWhere().HasParent(42, "parent_id")
+		assert.Contains(t, w.String(), "parent_id = @ParentID")
+	})
+
+	t.Run("not_replaced_invalid_falls_back", func(t *testing.T) {
+		for _, override := range invalidOverrides {
+			w := NewWhere().NotReplaced(override)
+			assert.Equal(t, "WHERE ReplacedByID IS NULL", w.String(), "override=%q", override)
+		}
+	})
+
+	t.Run("not_replaced_valid_still_works", func(t *testing.T) {
+		w := NewWhere().NotReplaced("replaced_by_id")
+		assert.Equal(t, "WHERE replaced_by_id IS NULL", w.String())
+	})
+
+	t.Run("replaced_by_invalid_falls_back", func(t *testing.T) {
+		for _, override := range invalidOverrides {
+			w := NewWhere().ReplacedBy(7, override)
+			assert.Contains(t, w.String(), "ReplacedByID = @ReplacedByID", "override=%q", override)
+			assert.NotContains(t, w.String(), "DROP TABLE", "override=%q", override)
+		}
+	})
+
+	t.Run("replaced_by_valid_still_works", func(t *testing.T) {
+		w := NewWhere().ReplacedBy(7, "replaced_by_id")
+		assert.Contains(t, w.String(), "replaced_by_id = @ReplacedByID")
+	})
+
+	t.Run("not_archived_invalid_falls_back", func(t *testing.T) {
+		for _, override := range invalidOverrides {
+			w := NewWhere().NotArchived(override)
+			assert.Equal(t, "WHERE ArchivedAt IS NULL", w.String(), "override=%q", override)
+		}
+	})
+
+	t.Run("not_archived_valid_still_works", func(t *testing.T) {
+		w := NewWhere().NotArchived("archived_at")
+		assert.Equal(t, "WHERE archived_at IS NULL", w.String())
+	})
+
+	t.Run("not_archived_bool_invalid_falls_back", func(t *testing.T) {
+		for _, override := range invalidOverrides {
+			w := NewWhere().NotArchivedBool(override)
+			assert.Equal(t, "WHERE NOT archived", w.String(), "override=%q", override)
+		}
+	})
+
+	t.Run("not_archived_bool_valid_still_works", func(t *testing.T) {
+		w := NewWhere().NotArchivedBool("is_archived")
+		assert.Equal(t, "WHERE NOT is_archived", w.String())
+	})
+
+	t.Run("not_archived_bool_invalid_falls_back_mssql", func(t *testing.T) {
+		for _, override := range invalidOverrides {
+			w := NewWhere().WithDialect(chuck.MSSQLDialect{}).NotArchivedBool(override)
+			assert.Equal(t, "WHERE archived = 0", w.String(), "override=%q", override)
+		}
+	})
+
+	t.Run("has_version_invalid_falls_back", func(t *testing.T) {
+		for _, override := range invalidOverrides {
+			w := NewWhere().HasVersion(3, override)
+			assert.Contains(t, w.String(), "Version = @Version", "override=%q", override)
+			assert.NotContains(t, w.String(), "DROP TABLE", "override=%q", override)
+		}
+	})
+
+	t.Run("has_version_valid_still_works", func(t *testing.T) {
+		w := NewWhere().HasVersion(3, "version")
+		assert.Contains(t, w.String(), "version = @Version")
+	})
+
+	t.Run("qualified_override_still_works", func(t *testing.T) {
+		// validIdentifier permits dots, so dot-qualified names like "t.deleted_at"
+		// should pass through unchanged.
+		w := NewWhere().NotDeleted("t.deleted_at")
+		assert.Equal(t, "WHERE t.deleted_at IS NULL", w.String())
+	})
+}
+
 func TestWhereSearch(t *testing.T) {
 	t.Run("with_search", func(t *testing.T) {
 		w := NewWhere().Search("gobo", "Name", "Email")

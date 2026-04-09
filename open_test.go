@@ -192,3 +192,61 @@ func TestOpenSQLiteReturnsDialect(t *testing.T) {
 	assert.Equal(t, "RETURNING id", d.ReturningClause("id"))
 }
 
+func TestOpenURLSQLiteFileAppliesWALMode(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "wal_test.db")
+
+	db, _, err := OpenURL(ctx, "sqlite://"+dbPath)
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	var journalMode string
+	err = db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&journalMode)
+	require.NoError(t, err)
+	assert.Equal(t, "wal", journalMode)
+}
+
+func TestOpenURLSQLiteFileAppliesBusyTimeout(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "busy_test.db")
+
+	db, _, err := OpenURL(ctx, "sqlite://"+dbPath)
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	var busyTimeout int
+	err = db.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&busyTimeout)
+	require.NoError(t, err)
+	assert.Equal(t, 30000, busyTimeout)
+}
+
+func TestOpenURLSQLiteFileAppliesConnectionPool(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "pool_test.db")
+
+	db, _, err := OpenURL(ctx, "sqlite://"+dbPath)
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	stats := db.Stats()
+	assert.Equal(t, 1, stats.MaxOpenConnections)
+}
+
+func TestOpenURLSQLiteMemoryStillWorks(t *testing.T) {
+	ctx := context.Background()
+	db, d, err := OpenURL(ctx, "sqlite://:memory:")
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	assert.Equal(t, SQLite, d.Engine())
+	assert.NoError(t, db.PingContext(ctx))
+
+	var journalMode string
+	err = db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&journalMode)
+	require.NoError(t, err)
+	// In-memory databases may report "memory" instead of "wal"
+	assert.Contains(t, []string{"wal", "memory"}, journalMode)
+}

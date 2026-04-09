@@ -118,9 +118,18 @@ func (w *WhereBuilder) HasConditions() bool {
 }
 
 // colName returns the first non-empty override, or the default.
+//
+// Override identifiers are validated against validIdentifier — the same rule
+// Search uses for field names — so callers cannot smuggle arbitrary SQL through
+// the helper override parameters. When the override is present but does not
+// match validIdentifier, colName falls back to the default name. Empty or
+// missing overrides also return the default. Qualified names like
+// "t.deleted_at" are accepted because validIdentifier permits dots.
 func colName(defaultName string, override []string) string {
 	if len(override) > 0 && override[0] != "" {
-		return override[0]
+		if validIdentifier.MatchString(override[0]) {
+			return override[0]
+		}
 	}
 	return defaultName
 }

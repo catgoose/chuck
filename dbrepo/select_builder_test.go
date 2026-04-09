@@ -75,8 +75,8 @@ func TestSelectBuilder(t *testing.T) {
 
 	t.Run("order_by_map", func(t *testing.T) {
 		colMap := map[string]string{
-			"name":  "Name",
-			"date":  "CreatedAt",
+			"name": "Name",
+			"date": "CreatedAt",
 		}
 		sql, _ := NewSelect("Tasks", "ID").
 			OrderByMap("name:asc,date:desc", colMap, "ID ASC").
@@ -234,5 +234,125 @@ func TestSelectBuilder(t *testing.T) {
 			WithDialect(d).
 			CountQuery()
 		assert.Equal(t, `SELECT COUNT(*) FROM "tasks" JOIN "users" ON Tasks.assignee_id = Users.id`, sql)
+	})
+
+	// Regression tests for #60: quoteDotQualifiedColumns must tolerate any
+	// whitespace around the comma separator in a pre-joined column string.
+	// Columns(cols...) joins multiple args with ", " unconditionally, so these
+	// tests pass a single pre-joined string to exercise the split logic.
+	t.Run("tolerant_column_spacing_no_space", func(t *testing.T) {
+		d := chuck.PostgresDialect{}
+		sql, _ := NewSelect("T", "u.ID,v.Name").
+			WithDialect(d).
+			Build()
+		assert.Equal(t, `SELECT "u"."id", "v"."name" FROM "t"`, sql)
+	})
+
+	t.Run("tolerant_column_spacing_double_space", func(t *testing.T) {
+		d := chuck.PostgresDialect{}
+		sql, _ := NewSelect("T", "u.ID,  v.Name").
+			WithDialect(d).
+			Build()
+		assert.Equal(t, `SELECT "u"."id", "v"."name" FROM "t"`, sql)
+	})
+
+	t.Run("tolerant_column_spacing_leading_space", func(t *testing.T) {
+		d := chuck.PostgresDialect{}
+		sql, _ := NewSelect("T", "u.ID , v.Name").
+			WithDialect(d).
+			Build()
+		assert.Equal(t, `SELECT "u"."id", "v"."name" FROM "t"`, sql)
+	})
+
+	t.Run("tolerant_column_spacing_canonical", func(t *testing.T) {
+		d := chuck.PostgresDialect{}
+		sql, _ := NewSelect("T", "u.ID, v.Name").
+			WithDialect(d).
+			Build()
+		assert.Equal(t, `SELECT "u"."id", "v"."name" FROM "t"`, sql)
+	})
+
+	// Regression tests for #62: aliased JOIN targets must only have the base
+	// table identifier quoted; the alias (and optional AS keyword) must be
+	// preserved verbatim.
+	t.Run("aliased_join_postgres", func(t *testing.T) {
+		d := chuck.PostgresDialect{}
+		sql, _ := NewSelect("Tasks", "Tasks.ID").
+			Join("Users u", "u.ID = Tasks.UserID").
+			WithDialect(d).
+			Build()
+		assert.Equal(t, `SELECT "tasks"."id" FROM "tasks" JOIN "users" u ON u.ID = Tasks.UserID`, sql)
+	})
+
+	t.Run("aliased_join_postgres_as_form", func(t *testing.T) {
+		d := chuck.PostgresDialect{}
+		sql, _ := NewSelect("Tasks", "Tasks.ID").
+			Join("Users AS u", "u.ID = Tasks.UserID").
+			WithDialect(d).
+			Build()
+		assert.Equal(t, `SELECT "tasks"."id" FROM "tasks" JOIN "users" AS u ON u.ID = Tasks.UserID`, sql)
+	})
+
+	t.Run("aliased_join_postgres_as_lowercase", func(t *testing.T) {
+		d := chuck.PostgresDialect{}
+		sql, _ := NewSelect("Tasks", "Tasks.ID").
+			Join("Users as u", "u.ID = Tasks.UserID").
+			WithDialect(d).
+			Build()
+		assert.Equal(t, `SELECT "tasks"."id" FROM "tasks" JOIN "users" as u ON u.ID = Tasks.UserID`, sql)
+	})
+
+	t.Run("aliased_left_join_postgres", func(t *testing.T) {
+		d := chuck.PostgresDialect{}
+		sql, _ := NewSelect("Tasks", "Tasks.ID").
+			LeftJoin("Orders o", "o.TaskID = Tasks.ID").
+			WithDialect(d).
+			Build()
+		assert.Equal(t, `SELECT "tasks"."id" FROM "tasks" LEFT JOIN "orders" o ON o.TaskID = Tasks.ID`, sql)
+	})
+
+	t.Run("aliased_join_sqlite", func(t *testing.T) {
+		d := chuck.SQLiteDialect{}
+		sql, _ := NewSelect("Tasks", "Tasks.ID").
+			Join("Users u", "u.ID = Tasks.UserID").
+			WithDialect(d).
+			Build()
+		assert.Equal(t, `SELECT "Tasks"."ID" FROM "Tasks" JOIN "Users" u ON u.ID = Tasks.UserID`, sql)
+	})
+
+	t.Run("aliased_join_sqlite_as_form", func(t *testing.T) {
+		d := chuck.SQLiteDialect{}
+		sql, _ := NewSelect("Tasks", "Tasks.ID").
+			Join("Users AS u", "u.ID = Tasks.UserID").
+			WithDialect(d).
+			Build()
+		assert.Equal(t, `SELECT "Tasks"."ID" FROM "Tasks" JOIN "Users" AS u ON u.ID = Tasks.UserID`, sql)
+	})
+
+	t.Run("aliased_join_mssql", func(t *testing.T) {
+		d := chuck.MSSQLDialect{}
+		sql, _ := NewSelect("Tasks", "Tasks.ID").
+			Join("Users u", "u.ID = Tasks.UserID").
+			WithDialect(d).
+			Build()
+		assert.Equal(t, `SELECT [Tasks].[ID] FROM [Tasks] JOIN [Users] u ON u.ID = Tasks.UserID`, sql)
+	})
+
+	t.Run("aliased_join_mssql_as_form", func(t *testing.T) {
+		d := chuck.MSSQLDialect{}
+		sql, _ := NewSelect("Tasks", "Tasks.ID").
+			Join("Users AS u", "u.ID = Tasks.UserID").
+			WithDialect(d).
+			Build()
+		assert.Equal(t, `SELECT [Tasks].[ID] FROM [Tasks] JOIN [Users] AS u ON u.ID = Tasks.UserID`, sql)
+	})
+
+	t.Run("aliased_join_count_query", func(t *testing.T) {
+		d := chuck.PostgresDialect{}
+		sql, _ := NewSelect("Tasks", "Tasks.ID").
+			Join("Users u", "u.ID = Tasks.UserID").
+			WithDialect(d).
+			CountQuery()
+		assert.Equal(t, `SELECT COUNT(*) FROM "tasks" JOIN "users" u ON u.ID = Tasks.UserID`, sql)
 	})
 }

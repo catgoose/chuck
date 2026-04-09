@@ -97,7 +97,7 @@ func (s *SelectBuilder) Build() (query string, args []any) {
 	for _, j := range s.joins {
 		jt := j.table
 		if s.dialect != nil {
-			jt = s.dialect.QuoteIdentifier(s.dialect.NormalizeIdentifier(j.table))
+			jt = quoteJoinTarget(s.dialect, j.table)
 		}
 		parts = append(parts, fmt.Sprintf("%s %s ON %s", j.joinType, jt, j.condition))
 	}
@@ -140,7 +140,7 @@ func (s *SelectBuilder) CountQuery() (query string, args []any) {
 	for _, j := range s.joins {
 		jt := j.table
 		if s.dialect != nil {
-			jt = s.dialect.QuoteIdentifier(s.dialect.NormalizeIdentifier(j.table))
+			jt = quoteJoinTarget(s.dialect, j.table)
 		}
 		parts = append(parts, fmt.Sprintf("%s %s ON %s", j.joinType, jt, j.condition))
 	}
@@ -155,8 +155,12 @@ func (s *SelectBuilder) CountQuery() (query string, args []any) {
 // quoteDotQualifiedColumns takes a comma-separated column list and quotes only
 // dot-qualified names (Table.Column) by quoting each part separately.
 // Simple column names are left as-is to preserve backward compatibility.
+//
+// The input is split on "," (not ", ") and each token is whitespace-trimmed so
+// that variations like "u.ID,v.Name", "u.ID,  v.Name", and "u.ID , v.Name" all
+// parse the same way. Output is always rejoined with ", " for consistency.
 func quoteDotQualifiedColumns(d chuck.Identifier, cols string) string {
-	parts := strings.Split(cols, ", ")
+	parts := strings.Split(cols, ",")
 	result := make([]string, len(parts))
 	for i, col := range parts {
 		col = strings.TrimSpace(col)
@@ -169,4 +173,69 @@ func quoteDotQualifiedColumns(d chuck.Identifier, cols string) string {
 		}
 	}
 	return strings.Join(result, ", ")
+}
+
+// parseJoinTarget splits a JOIN target expression into its base table
+// identifier and an optional alias.
+//
+// Supported shapes:
+//   - "Users"        -> base="Users", alias="",  asForm=false
+//   - "Users u"      -> base="Users", alias="u", asForm=false
+//   - "Orders AS o"  -> base="Orders", alias="o", asForm=true (AS preserved in
+//     the original case from the input)
+//   - "Orders as o"  -> base="Orders", alias="o", asForm=true
+//
+// Ambiguous or unsupported shapes (empty input, anything containing
+// parentheses such as derived tables/subqueries, or expressions with more
+// than three whitespace-separated tokens) return base="" with the full input
+// preserved in alias so the caller can pass it through unquoted.
+func parseJoinTarget(s string) (base, alias, asKeyword string) {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return "", "", ""
+	}
+	// Derived tables / subqueries and anything exotic: preserve verbatim.
+	if strings.ContainsAny(trimmed, "()") {
+		return "", trimmed, ""
+	}
+	fields := strings.Fields(trimmed)
+	switch len(fields) {
+	case 1:
+		return fields[0], "", ""
+	case 2:
+		return fields[0], fields[1], ""
+	case 3:
+		if strings.EqualFold(fields[1], "AS") {
+			return fields[0], fields[2], fields[1]
+		}
+		// Three tokens without AS is ambiguous — preserve verbatim.
+		return "", trimmed, ""
+	default:
+		return "", trimmed, ""
+	}
+}
+
+// quoteJoinTarget applies dialect quoting to a JOIN target while preserving
+// any alias tokens unchanged. Only the base table identifier is normalized
+// and quoted; aliases (with or without the AS keyword) are emitted literally
+// so callers can match them in ON/WHERE clauses without surprise casing.
+//
+// If the target shape is ambiguous (derived tables, more than three tokens,
+// etc.) parseJoinTarget yields an empty base and the full original input is
+// returned as-is to preserve historical behavior.
+func quoteJoinTarget(d chuck.Dialect, target string) string {
+	base, alias, asKeyword := parseJoinTarget(target)
+	if base == "" {
+		// Ambiguous shape: fall back to the raw input unchanged.
+		return alias
+	}
+	quoted := d.QuoteIdentifier(d.NormalizeIdentifier(base))
+	switch {
+	case alias == "":
+		return quoted
+	case asKeyword != "":
+		return quoted + " " + asKeyword + " " + alias
+	default:
+		return quoted + " " + alias
+	}
 }

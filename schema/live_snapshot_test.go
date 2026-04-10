@@ -369,6 +369,71 @@ func TestMSSQLIndexQueryOrdersByKeyOrdinal(t *testing.T) {
 		"MSSQL index query should order by key_ordinal")
 }
 
+func TestReconstructMSSQLType(t *testing.T) {
+	intVal := func(n int64) sql.NullInt64 { return sql.NullInt64{Valid: true, Int64: n} }
+	null := sql.NullInt64{}
+
+	tests := []struct {
+		name             string
+		dataType         string
+		charMaxLength    sql.NullInt64
+		numericPrecision sql.NullInt64
+		numericScale     sql.NullInt64
+		want             string
+	}{
+		// String types
+		{"VARCHAR(255)", "VARCHAR", intVal(255), null, null, "VARCHAR(255)"},
+		{"VARCHAR(MAX)", "VARCHAR", intVal(-1), null, null, "VARCHAR(MAX)"},
+		{"VARCHAR null length", "VARCHAR", null, null, null, "VARCHAR"},
+		{"NVARCHAR(255)", "NVARCHAR", intVal(255), null, null, "NVARCHAR(255)"},
+		{"NVARCHAR(MAX)", "NVARCHAR", intVal(-1), null, null, "NVARCHAR(MAX)"},
+		{"CHAR(10)", "CHAR", intVal(10), null, null, "CHAR(10)"},
+		{"NCHAR(8)", "NCHAR", intVal(8), null, null, "NCHAR(8)"},
+
+		// Binary types
+		{"VARBINARY(100)", "VARBINARY", intVal(100), null, null, "VARBINARY(100)"},
+		{"VARBINARY(MAX)", "VARBINARY", intVal(-1), null, null, "VARBINARY(MAX)"},
+		{"BINARY(16)", "BINARY", intVal(16), null, null, "BINARY(16)"},
+
+		// Numeric types
+		{"DECIMAL(10,2)", "DECIMAL", null, intVal(10), intVal(2), "DECIMAL(10,2)"},
+		{"NUMERIC(18,4)", "NUMERIC", null, intVal(18), intVal(4), "NUMERIC(18,4)"},
+		{"DECIMAL null params", "DECIMAL", null, null, null, "DECIMAL"},
+		{"DECIMAL null scale", "DECIMAL", null, intVal(10), null, "DECIMAL"},
+
+		// Other types — bare base name, no parameters appended
+		{"INT bare", "INT", null, null, null, "INT"},
+		{"INT with stray numeric metadata", "INT", null, intVal(10), intVal(0), "INT"},
+		{"BIGINT bare", "BIGINT", null, null, null, "BIGINT"},
+		{"DATETIME2 bare", "DATETIME2", null, null, null, "DATETIME2"},
+		{"BIT bare", "BIT", null, null, null, "BIT"},
+		{"UNIQUEIDENTIFIER bare", "UNIQUEIDENTIFIER", null, null, null, "UNIQUEIDENTIFIER"},
+		{"FLOAT bare", "FLOAT", null, null, null, "FLOAT"},
+		{"non-string null charMaxLength", "DATE", null, null, null, "DATE"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := reconstructMSSQLType(tt.dataType, tt.charMaxLength, tt.numericPrecision, tt.numericScale)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestMSSQLColumnQuerySelectsReconstructionMetadata(t *testing.T) {
+	// The MSSQL column query must select CHARACTER_MAXIMUM_LENGTH,
+	// NUMERIC_PRECISION, and NUMERIC_SCALE so reconstructMSSQLType can
+	// rebuild parameterized type strings (e.g. NVARCHAR(255), DECIMAL(10,2)).
+	assert.Contains(t, mssqlColumnQuery, "CHARACTER_MAXIMUM_LENGTH",
+		"MSSQL column query should select CHARACTER_MAXIMUM_LENGTH")
+	assert.Contains(t, mssqlColumnQuery, "NUMERIC_PRECISION",
+		"MSSQL column query should select NUMERIC_PRECISION")
+	assert.Contains(t, mssqlColumnQuery, "NUMERIC_SCALE",
+		"MSSQL column query should select NUMERIC_SCALE")
+	assert.Contains(t, mssqlColumnQuery, "INFORMATION_SCHEMA.COLUMNS",
+		"MSSQL column query should read from INFORMATION_SCHEMA.COLUMNS")
+}
+
 func TestLiveSnapshotCompareWithDeclared(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)

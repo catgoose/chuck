@@ -78,14 +78,26 @@ func LiveSchemaSnapshot(ctx context.Context, db *sql.DB, d chuck.Dialect, tableN
 }
 
 func queryColumns(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName string) ([]LiveColumnSnapshot, error) {
+	switch d.Engine() {
+	case chuck.SQLite, chuck.Postgres:
+		return queryColumnsSimple(ctx, db, d, tableName)
+	case chuck.MSSQL:
+		return queryColumnsMSSQL(ctx, db, tableName)
+	default:
+		return nil, fmt.Errorf("unsupported engine: %s", d.Engine())
+	}
+}
+
+// queryColumnsSimple handles engines whose column queries return the shared
+// 4-column shape (name, type, nullable, default) and need no per-column
+// reconstruction work. Used by SQLite and Postgres.
+func queryColumnsSimple(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName string) ([]LiveColumnSnapshot, error) {
 	var query string
 	switch d.Engine() {
 	case chuck.SQLite:
 		query = `SELECT name, type, CASE WHEN "notnull" = 1 OR pk = 1 THEN 'NO' ELSE 'YES' END AS nullable, COALESCE(dflt_value, '') AS dflt FROM pragma_table_info(?)`
 	case chuck.Postgres:
 		query = postgresColumnQuery
-	case chuck.MSSQL:
-		query = `SELECT COLUMN_NAME, UPPER(DATA_TYPE), IS_NULLABLE, COALESCE(COLUMN_DEFAULT, '') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @p1 ORDER BY ORDINAL_POSITION`
 	default:
 		return nil, fmt.Errorf("unsupported engine: %s", d.Engine())
 	}
@@ -110,6 +122,71 @@ func queryColumns(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName st
 		})
 	}
 	return cols, rows.Err()
+}
+
+// mssqlColumnQuery selects the metadata needed to reconstruct parameterized
+// MSSQL column type strings. CHARACTER_MAXIMUM_LENGTH is in characters (not
+// bytes) per the SQL Server INFORMATION_SCHEMA.COLUMNS contract, with -1
+// indicating MAX. NUMERIC_PRECISION/NUMERIC_SCALE are populated for numeric
+// types and NULL otherwise. All three are nullable, hence the NullInt64 scans.
+var mssqlColumnQuery = `SELECT COLUMN_NAME, UPPER(DATA_TYPE), IS_NULLABLE, COALESCE(COLUMN_DEFAULT, ''), CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @p1 ORDER BY ORDINAL_POSITION`
+
+// queryColumnsMSSQL queries MSSQL column metadata and rebuilds parameterized
+// type strings (e.g. NVARCHAR(255), DECIMAL(10,2), VARCHAR(MAX)) so live
+// snapshots match the declared types produced by Snapshot().
+func queryColumnsMSSQL(ctx context.Context, db *sql.DB, tableName string) ([]LiveColumnSnapshot, error) {
+	rows, err := db.QueryContext(ctx, mssqlColumnQuery, tableName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cols []LiveColumnSnapshot
+	for rows.Next() {
+		var (
+			name, dataType, nullable, dflt string
+			charMaxLength                  sql.NullInt64
+			numericPrecision               sql.NullInt64
+			numericScale                   sql.NullInt64
+		)
+		if err := rows.Scan(&name, &dataType, &nullable, &dflt, &charMaxLength, &numericPrecision, &numericScale); err != nil {
+			return nil, err
+		}
+		cols = append(cols, LiveColumnSnapshot{
+			Name:     name,
+			Type:     reconstructMSSQLType(strings.TrimSpace(dataType), charMaxLength, numericPrecision, numericScale),
+			Nullable: strings.EqualFold(nullable, "YES"),
+			Default:  strings.TrimSpace(dflt),
+		})
+	}
+	return cols, rows.Err()
+}
+
+// reconstructMSSQLType rebuilds a parameterized type string from
+// INFORMATION_SCHEMA.COLUMNS metadata. The base dataType is expected to be
+// uppercase. Returns the bare base type when no parameters apply.
+//
+// CHARACTER_MAXIMUM_LENGTH from INFORMATION_SCHEMA.COLUMNS is already
+// expressed in characters (not bytes), so NVARCHAR/NCHAR do not need a
+// byte-to-character conversion. A value of -1 means MAX.
+func reconstructMSSQLType(dataType string, charMaxLength, numericPrecision, numericScale sql.NullInt64) string {
+	switch dataType {
+	case "VARCHAR", "CHAR", "NVARCHAR", "NCHAR", "VARBINARY", "BINARY":
+		if !charMaxLength.Valid {
+			return dataType
+		}
+		if charMaxLength.Int64 == -1 {
+			return fmt.Sprintf("%s(MAX)", dataType)
+		}
+		return fmt.Sprintf("%s(%d)", dataType, charMaxLength.Int64)
+	case "DECIMAL", "NUMERIC":
+		if !numericPrecision.Valid || !numericScale.Valid {
+			return dataType
+		}
+		return fmt.Sprintf("%s(%d,%d)", dataType, numericPrecision.Int64, numericScale.Int64)
+	default:
+		return dataType
+	}
 }
 
 func queryIndexes(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName string) ([]LiveIndexSnapshot, error) {

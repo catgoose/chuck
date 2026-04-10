@@ -43,6 +43,14 @@ func ValidateSchema(ctx context.Context, db *sql.DB, d chuck.Dialect, td *TableD
 		return []SchemaError{{Table: tableName, Message: err.Error()}}
 	}
 
+	return validateAgainstLiveSnapshot(td, d, live, tableName)
+}
+
+// validateAgainstLiveSnapshot is the pure comparison core of ValidateSchema:
+// it compares a declared TableDef against an already-fetched LiveTableSnapshot
+// and returns any drift errors. Extracted so the comparator can be unit-tested
+// against crafted live snapshots without requiring a real database.
+func validateAgainstLiveSnapshot(td *TableDef, d chuck.Dialect, live LiveTableSnapshot, tableName string) []SchemaError {
 	declared := td.Snapshot(d)
 
 	var errs []SchemaError
@@ -153,19 +161,56 @@ func ValidateSchema(ctx context.Context, db *sql.DB, d chuck.Dialect, td *TableD
 	for _, idx := range declared.Indexes {
 		declaredIndexMap[idx.Name] = true
 	}
+	implicitUniques := declaredSingleColumnUniques(td)
 	for _, idx := range live.Indexes {
-		if !declaredIndexMap[idx.Name] {
-			errs = append(errs, SchemaError{
-				Table:   tableName,
-				Message: fmt.Sprintf("unexpected index %q (exists in database but not in declaration)", idx.Name),
-			})
+		if declaredIndexMap[idx.Name] {
+			continue
 		}
+		// A live single-column unique index may be the implicit index that
+		// the database created to back a column-level UNIQUE constraint.
+		// Match by column set rather than by name so engine-specific naming
+		// (Postgres "<table>_<col>_key", MSSQL "UQ__<prefix>__<hash>") all work.
+		if idx.Unique && len(idx.Columns) == 1 && idx.Where == "" {
+			if implicitUniques[strings.ToLower(idx.Columns[0])] {
+				continue
+			}
+		}
+		errs = append(errs, SchemaError{
+			Table:   tableName,
+			Message: fmt.Sprintf("unexpected index %q (exists in database but not in declaration)", idx.Name),
+		})
 	}
 
 	if len(errs) == 0 {
 		return nil
 	}
 	return errs
+}
+
+// declaredSingleColumnUniques returns the set of column names (lowercased)
+// that are declared unique via a single-column UNIQUE constraint, either on
+// the ColumnDef itself (via .Unique()) or as a single-column entry in
+// TableDef.UniqueColumns. Composite unique constraints (len > 1) are
+// intentionally excluded — those are handled by the standard index
+// declaration path.
+//
+// The returned map is used to suppress false-positive "unexpected index"
+// errors for the implicit single-column unique indexes that databases
+// automatically create to back column-level UNIQUE constraints (e.g.
+// Postgres "<table>_<col>_key", MSSQL "UQ__<prefix>__<hash>").
+func declaredSingleColumnUniques(td *TableDef) map[string]bool {
+	out := make(map[string]bool)
+	for _, c := range td.cols {
+		if c.unique {
+			out[strings.ToLower(c.name)] = true
+		}
+	}
+	for _, uc := range td.uniqueConstraints {
+		if len(uc.columns) == 1 {
+			out[strings.ToLower(uc.columns[0])] = true
+		}
+	}
+	return out
 }
 
 // ValidateAll validates multiple table definitions against the live database.

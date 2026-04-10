@@ -380,3 +380,241 @@ func TestValidateAll(t *testing.T) {
 		assert.True(t, found, "expected error for missing column 'Missing'")
 	})
 }
+
+// TestValidateImplicitUniqueIndexes covers issue #65 item 2: a single-column
+// unique index that backs a declared column-level UNIQUE constraint must not
+// be reported as an unexpected/extra index, regardless of the engine-specific
+// auto-generated index name (Postgres "<table>_<col>_key", MSSQL
+// "UQ__<prefix>__<hash>", etc.). The matching is done by column set, not by
+// name, with case-insensitive normalization to bridge Postgres lowercasing.
+//
+// These tests exercise the comparator core directly via
+// validateAgainstLiveSnapshot so they do not require a live database (the
+// SQLite live snapshot path filters out implicit unique indexes via the
+// pragma_index_list origin filter, so we need crafted live snapshots to
+// reach the implicit-skip code path).
+func TestValidateImplicitUniqueIndexes(t *testing.T) {
+	d := chuck.SQLiteDialect{}
+
+	// liveUsersBase returns a live snapshot whose columns match a minimal
+	// users table (ID + Email). Tests append index entries on top of this.
+	liveUsersBase := func(extraIndexes ...LiveIndexSnapshot) LiveTableSnapshot {
+		return LiveTableSnapshot{
+			Name: "users",
+			Columns: []LiveColumnSnapshot{
+				{Name: "ID", Type: "INTEGER", Nullable: false},
+				{Name: "Email", Type: "VARCHAR(255)", Nullable: false},
+			},
+			Indexes: extraIndexes,
+		}
+	}
+
+	tests := []struct {
+		name           string
+		declared       *TableDef
+		live           LiveTableSnapshot
+		wantUnexpected []string // index names expected in "unexpected index" errors
+	}{
+		{
+			name: "ColumnDef.Unique() suppresses Postgres-style implicit index",
+			declared: NewTable("users").Columns(
+				AutoIncrCol("ID"),
+				Col("Email", TypeVarchar(255)).NotNull().Unique(),
+			),
+			live: liveUsersBase(LiveIndexSnapshot{
+				Name: "users_email_key", Columns: []string{"Email"}, Unique: true,
+			}),
+			wantUnexpected: nil,
+		},
+		{
+			name: "single-column UniqueColumns suppresses implicit index",
+			declared: NewTable("users").
+				Columns(
+					AutoIncrCol("ID"),
+					Col("Email", TypeVarchar(255)).NotNull(),
+				).
+				UniqueColumns("Email"),
+			live: liveUsersBase(LiveIndexSnapshot{
+				Name: "users_email_key", Columns: []string{"Email"}, Unique: true,
+			}),
+			wantUnexpected: nil,
+		},
+		{
+			name: "multi-column UniqueColumns does NOT suppress single-column live unique",
+			declared: NewTable("users").
+				Columns(
+					AutoIncrCol("ID"),
+					Col("Email", TypeVarchar(255)).NotNull(),
+				).
+				UniqueColumns("Email", "ID"),
+			live: liveUsersBase(LiveIndexSnapshot{
+				Name: "users_email_idx", Columns: []string{"Email"}, Unique: true,
+			}),
+			wantUnexpected: []string{"users_email_idx"},
+		},
+		{
+			name: "no declared unique => live unique index is real drift",
+			declared: NewTable("users").Columns(
+				AutoIncrCol("ID"),
+				Col("Email", TypeVarchar(255)).NotNull(),
+			),
+			live: liveUsersBase(LiveIndexSnapshot{
+				Name: "users_email_key", Columns: []string{"Email"}, Unique: true,
+			}),
+			wantUnexpected: []string{"users_email_key"},
+		},
+		{
+			name: "declared unique but live multi-column index is reported",
+			declared: NewTable("users").Columns(
+				AutoIncrCol("ID"),
+				Col("Email", TypeVarchar(255)).NotNull().Unique(),
+			),
+			live: liveUsersBase(LiveIndexSnapshot{
+				Name: "users_email_idx", Columns: []string{"Email", "ID"}, Unique: true,
+			}),
+			wantUnexpected: []string{"users_email_idx"},
+		},
+		{
+			name: "declared unique but live non-unique index is reported",
+			declared: NewTable("users").Columns(
+				AutoIncrCol("ID"),
+				Col("Email", TypeVarchar(255)).NotNull().Unique(),
+			),
+			live: liveUsersBase(LiveIndexSnapshot{
+				Name: "users_email_idx", Columns: []string{"Email"}, Unique: false,
+			}),
+			wantUnexpected: []string{"users_email_idx"},
+		},
+		{
+			name: "declared unique but live partial unique index is reported",
+			declared: NewTable("users").Columns(
+				AutoIncrCol("ID"),
+				Col("Email", TypeVarchar(255)).NotNull().Unique(),
+			),
+			live: liveUsersBase(LiveIndexSnapshot{
+				Name:    "users_email_partial",
+				Columns: []string{"Email"},
+				Unique:  true,
+				Where:   "deleted_at IS NULL",
+			}),
+			wantUnexpected: []string{"users_email_partial"},
+		},
+		{
+			name: "MSSQL-style hash-suffixed name with case-insensitive match",
+			declared: NewTable("users").Columns(
+				AutoIncrCol("ID"),
+				Col("Email", TypeVarchar(255)).NotNull().Unique(),
+			),
+			live: liveUsersBase(LiveIndexSnapshot{
+				Name:    "UQ__users___ABC12345",
+				Columns: []string{"Email"},
+				Unique:  true,
+			}),
+			wantUnexpected: nil,
+		},
+		{
+			name: "Postgres-style lowercase live column matches PascalCase declaration",
+			declared: NewTable("users").Columns(
+				AutoIncrCol("ID"),
+				Col("Email", TypeVarchar(255)).NotNull().Unique(),
+			),
+			live: LiveTableSnapshot{
+				Name: "users",
+				Columns: []LiveColumnSnapshot{
+					{Name: "ID", Type: "INTEGER", Nullable: false},
+					{Name: "Email", Type: "VARCHAR(255)", Nullable: false},
+				},
+				Indexes: []LiveIndexSnapshot{
+					{Name: "users_email_key", Columns: []string{"email"}, Unique: true},
+				},
+			},
+			wantUnexpected: nil,
+		},
+		{
+			name: "explicit declared index with same name does not regress: matched by name path",
+			declared: NewTable("users").
+				Columns(
+					AutoIncrCol("ID"),
+					Col("Email", TypeVarchar(255)).NotNull().Unique(),
+				).
+				Indexes(UniqueIndex("users_email_key", "Email")),
+			live: liveUsersBase(LiveIndexSnapshot{
+				Name: "users_email_key", Columns: []string{"Email"}, Unique: true,
+			}),
+			wantUnexpected: nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tableName := d.NormalizeIdentifier(tc.declared.Name)
+			errs := validateAgainstLiveSnapshot(tc.declared, d, tc.live, tableName)
+
+			var gotUnexpected []string
+			for _, e := range errs {
+				if strings.HasPrefix(e.Message, "unexpected index ") {
+					gotUnexpected = append(gotUnexpected, e.Message)
+				}
+			}
+
+			if len(tc.wantUnexpected) == 0 {
+				assert.Empty(t, gotUnexpected, "expected no unexpected-index errors, got: %v (full: %v)", gotUnexpected, errs)
+				return
+			}
+			require.Len(t, gotUnexpected, len(tc.wantUnexpected),
+				"unexpected-index error count mismatch: got %v, full errs: %v", gotUnexpected, errs)
+			for _, name := range tc.wantUnexpected {
+				found := false
+				for _, msg := range gotUnexpected {
+					if strings.Contains(msg, `"`+name+`"`) {
+						found = true
+						break
+					}
+				}
+				assert.True(t, found, "expected unexpected-index error for %q, got: %v", name, gotUnexpected)
+			}
+		})
+	}
+}
+
+func TestDeclaredSingleColumnUniques(t *testing.T) {
+	t.Run("ColumnDef.Unique includes column", func(t *testing.T) {
+		td := NewTable("users").Columns(
+			AutoIncrCol("ID"),
+			Col("Email", TypeVarchar(255)).NotNull().Unique(),
+		)
+		got := declaredSingleColumnUniques(td)
+		assert.True(t, got["email"])
+		assert.False(t, got["id"])
+	})
+
+	t.Run("single-column UniqueColumns is included", func(t *testing.T) {
+		td := NewTable("users").
+			Columns(AutoIncrCol("ID"), Col("Email", TypeVarchar(255)).NotNull()).
+			UniqueColumns("Email")
+		got := declaredSingleColumnUniques(td)
+		assert.True(t, got["email"])
+	})
+
+	t.Run("multi-column UniqueColumns is excluded", func(t *testing.T) {
+		td := NewTable("users").
+			Columns(
+				AutoIncrCol("ID"),
+				Col("TenantID", TypeInt()).NotNull(),
+				Col("Email", TypeVarchar(255)).NotNull(),
+			).
+			UniqueColumns("TenantID", "Email")
+		got := declaredSingleColumnUniques(td)
+		assert.False(t, got["tenantid"])
+		assert.False(t, got["email"])
+	})
+
+	t.Run("no unique declarations returns empty map", func(t *testing.T) {
+		td := NewTable("users").Columns(
+			AutoIncrCol("ID"),
+			Col("Email", TypeVarchar(255)).NotNull(),
+		)
+		got := declaredSingleColumnUniques(td)
+		assert.Empty(t, got)
+	})
+}

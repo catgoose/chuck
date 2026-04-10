@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/catgoose/chuck"
@@ -135,8 +136,10 @@ func validateAgainstLiveSnapshot(td *TableDef, d chuck.Dialect, live LiveTableSn
 			})
 			continue
 		}
-		liveColStr := strings.Join(liveIdx.Columns, ", ")
-		if idx.Columns != liveColStr {
+		declaredCanonical := canonicalIndexColumns(d, strings.Split(idx.Columns, ","))
+		liveCanonical := canonicalIndexColumns(d, liveIdx.Columns)
+		if !slices.Equal(declaredCanonical, liveCanonical) {
+			liveColStr := strings.Join(liveIdx.Columns, ", ")
 			errs = append(errs, SchemaError{
 				Table:   tableName,
 				Message: fmt.Sprintf("index %q columns mismatch: declared %q, live %q", idx.Name, idx.Columns, liveColStr),
@@ -209,6 +212,24 @@ func declaredSingleColumnUniques(td *TableDef) map[string]bool {
 		if len(uc.columns) == 1 {
 			out[strings.ToLower(uc.columns[0])] = true
 		}
+	}
+	return out
+}
+
+// canonicalIndexColumns returns the canonical comparable form of an index
+// column list. Each token is trimmed and run through the dialect's
+// NormalizeIdentifier so that engine-driven identifier transforms (e.g.
+// Postgres lowercasing PascalCase to snake_case) do not produce false
+// drift in index column comparison. Order is preserved because index
+// column order is significant.
+func canonicalIndexColumns(d chuck.Dialect, tokens []string) []string {
+	out := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		out = append(out, d.NormalizeIdentifier(t))
 	}
 	return out
 }

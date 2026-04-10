@@ -618,3 +618,207 @@ func TestDeclaredSingleColumnUniques(t *testing.T) {
 		assert.Empty(t, got)
 	})
 }
+
+// TestValidateIndexColumnNormalization covers issue #65 item 4: the index
+// column comparator must run both declared and live column lists through
+// the active dialect's NormalizeIdentifier before comparing. Postgres
+// lowercases unquoted PascalCase identifiers to snake_case, so a declared
+// index on "Name" matches a live index on "name" without engine-specific
+// logic. SQLite and MSSQL NormalizeIdentifier are identity, so
+// case-preserving engines still see the raw tokens.
+//
+// Each case builds a *TableDef with one index and a LiveTableSnapshot with
+// the corresponding live index, then calls validateAgainstLiveSnapshot
+// directly to avoid requiring a real database.
+func TestValidateIndexColumnNormalization(t *testing.T) {
+	// liveBase returns a live snapshot whose columns match what the
+	// declared TableDef below exposes. Each test sets its own Indexes
+	// entry. The column set is intentionally broad (covers a, b, c, Name,
+	// UserID, FooBar) so the column-presence check does not produce
+	// unrelated drift errors that would pollute the assertions.
+	liveBase := func(indexes ...LiveIndexSnapshot) LiveTableSnapshot {
+		return LiveTableSnapshot{
+			Name: "t",
+			Columns: []LiveColumnSnapshot{
+				{Name: "a", Type: "INTEGER", Nullable: false},
+				{Name: "b", Type: "INTEGER", Nullable: false},
+				{Name: "c", Type: "INTEGER", Nullable: false},
+				{Name: "name", Type: "VARCHAR(255)", Nullable: false},
+				{Name: "user_id", Type: "INTEGER", Nullable: false},
+				{Name: "foo_bar", Type: "VARCHAR(255)", Nullable: false},
+			},
+		}
+	}
+	// liveBaseCaseSensitive is the SQLite/MSSQL variant where column
+	// names are preserved verbatim so the declared PascalCase columns
+	// line up with the live snapshot's columns without normalization.
+	liveBaseCaseSensitive := func(indexes ...LiveIndexSnapshot) LiveTableSnapshot {
+		return LiveTableSnapshot{
+			Name: "t",
+			Columns: []LiveColumnSnapshot{
+				{Name: "a", Type: "INTEGER", Nullable: false},
+				{Name: "b", Type: "INTEGER", Nullable: false},
+				{Name: "c", Type: "INTEGER", Nullable: false},
+				{Name: "Name", Type: "VARCHAR(255)", Nullable: false},
+				{Name: "UserID", Type: "INTEGER", Nullable: false},
+				{Name: "FooBar", Type: "VARCHAR(255)", Nullable: false},
+			},
+		}
+	}
+
+	// declaredTable returns a *TableDef with a broad column set and a
+	// single index whose columns string is determined by the test case.
+	declaredTable := func(idxCols string) *TableDef {
+		return NewTable("t").
+			Columns(
+				Col("a", TypeInt()).NotNull(),
+				Col("b", TypeInt()).NotNull(),
+				Col("c", TypeInt()).NotNull(),
+				Col("Name", TypeVarchar(255)).NotNull(),
+				Col("UserID", TypeInt()).NotNull(),
+				Col("FooBar", TypeVarchar(255)).NotNull(),
+			).
+			Indexes(Index("idx_t", idxCols))
+	}
+
+	tests := []struct {
+		name           string
+		dialect        chuck.Dialect
+		declaredCols   string
+		liveCols       []string
+		caseSensitive  bool // use liveBaseCaseSensitive instead of liveBase
+		wantDrift      bool
+		wantMsgHas     []string // substrings the drift error must contain (only consulted when wantDrift)
+		wantMsgHasNone []string // substrings the drift error must NOT contain (only consulted when wantDrift)
+	}{
+		{
+			name:         "postgres: PascalCase declared vs snake_case live (single)",
+			dialect:      chuck.PostgresDialect{},
+			declaredCols: "Name",
+			liveCols:     []string{"name"},
+			wantDrift:    false,
+		},
+		{
+			name:         "postgres: PascalCase with acronym vs snake_case live",
+			dialect:      chuck.PostgresDialect{},
+			declaredCols: "UserID",
+			liveCols:     []string{"user_id"},
+			wantDrift:    false,
+		},
+		{
+			name:         "postgres: multi-column canonical form matches",
+			dialect:      chuck.PostgresDialect{},
+			declaredCols: "a, b",
+			liveCols:     []string{"a", "b"},
+			wantDrift:    false,
+		},
+		{
+			name:         "postgres: multi-column no space tolerated",
+			dialect:      chuck.PostgresDialect{},
+			declaredCols: "a,b",
+			liveCols:     []string{"a", "b"},
+			wantDrift:    false,
+		},
+		{
+			name:         "postgres: multi-column extra whitespace tolerated",
+			dialect:      chuck.PostgresDialect{},
+			declaredCols: "a , b",
+			liveCols:     []string{"a", "b"},
+			wantDrift:    false,
+		},
+		{
+			name:          "sqlite: PascalCase preserved both sides",
+			dialect:       chuck.SQLiteDialect{},
+			declaredCols:  "Name",
+			liveCols:      []string{"Name"},
+			caseSensitive: true,
+			wantDrift:     false,
+		},
+		{
+			name:          "mssql: PascalCase preserved both sides",
+			dialect:       chuck.MSSQLDialect{},
+			declaredCols:  "Name",
+			liveCols:      []string{"Name"},
+			caseSensitive: true,
+			wantDrift:     false,
+		},
+		{
+			name:         "postgres: order matters (b, a != a, b)",
+			dialect:      chuck.PostgresDialect{},
+			declaredCols: "a, b",
+			liveCols:     []string{"b", "a"},
+			wantDrift:    true,
+			wantMsgHas:   []string{`"a, b"`, `"b, a"`},
+		},
+		{
+			name:         "postgres: length differs live shorter",
+			dialect:      chuck.PostgresDialect{},
+			declaredCols: "a, b",
+			liveCols:     []string{"a"},
+			wantDrift:    true,
+			wantMsgHas:   []string{`"a, b"`, `"a"`},
+		},
+		{
+			name:         "postgres: length differs declared shorter",
+			dialect:      chuck.PostgresDialect{},
+			declaredCols: "a, b, c",
+			liveCols:     []string{"a", "b"},
+			wantDrift:    true,
+			wantMsgHas:   []string{`"a, b, c"`, `"a, b"`},
+		},
+		{
+			name:           "postgres: real drift preserves original strings in error",
+			dialect:        chuck.PostgresDialect{},
+			declaredCols:   "FooBar",
+			liveCols:       []string{"baz"},
+			wantDrift:      true,
+			wantMsgHas:     []string{`"FooBar"`, `"baz"`},
+			wantMsgHasNone: []string{"foo_bar"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			td := declaredTable(tc.declaredCols)
+			liveIdx := LiveIndexSnapshot{
+				Name:    "idx_t",
+				Columns: tc.liveCols,
+			}
+			var live LiveTableSnapshot
+			if tc.caseSensitive {
+				live = liveBaseCaseSensitive(liveIdx)
+			} else {
+				live = liveBase(liveIdx)
+			}
+			live.Indexes = []LiveIndexSnapshot{liveIdx}
+
+			tableName := tc.dialect.NormalizeIdentifier(td.Name)
+			errs := validateAgainstLiveSnapshot(td, tc.dialect, live, tableName)
+
+			var colMismatch []SchemaError
+			for _, e := range errs {
+				if strings.Contains(e.Message, "columns mismatch") {
+					colMismatch = append(colMismatch, e)
+				}
+			}
+
+			if !tc.wantDrift {
+				assert.Empty(t, colMismatch,
+					"expected no columns-mismatch error, got: %v (full errs: %v)", colMismatch, errs)
+				return
+			}
+
+			require.Len(t, colMismatch, 1,
+				"expected exactly one columns-mismatch error, got: %v (full errs: %v)", colMismatch, errs)
+			msg := colMismatch[0].Message
+			for _, s := range tc.wantMsgHas {
+				assert.Contains(t, msg, s,
+					"drift message missing required substring %q: %s", s, msg)
+			}
+			for _, s := range tc.wantMsgHasNone {
+				assert.NotContains(t, msg, s,
+					"drift message must not contain normalized form %q: %s", s, msg)
+			}
+		})
+	}
+}

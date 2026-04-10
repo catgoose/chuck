@@ -323,7 +323,10 @@ func splitTypeParams(s string) (base, params string) {
 // normalizeDefault normalizes a default value for comparison. Different databases
 // may wrap defaults differently (e.g., parentheses, quotes). This trims whitespace,
 // removes outer parentheses, and lowercases SQL keywords/functions while preserving
-// the case of string literal contents inside single quotes.
+// the case of string literal contents inside single quotes. Postgres sequence-backed
+// defaults (nextval(...)) canonicalize to the empty string so a declared column with
+// no explicit default matches a live column whose default is the implicit sequence
+// created by SERIAL, BIGSERIAL, or INTEGER PRIMARY KEY.
 func normalizeDefault(s string) string {
 	s = strings.TrimSpace(s)
 	// Strip outer parentheses (common in some databases, e.g., SQLite wraps defaults)
@@ -338,7 +341,16 @@ func normalizeDefault(s string) string {
 			parts[i] = strings.ToLower(parts[i])
 		}
 	}
-	return strings.Join(parts, "'")
+	result := strings.Join(parts, "'")
+	// Postgres sequence-backed defaults canonicalize to the empty string
+	// so a declared column with no explicit default matches a live column
+	// whose default is the implicit sequence created by SERIAL, BIGSERIAL,
+	// or INTEGER PRIMARY KEY. The lowercasing pass above already normalized
+	// "NEXTVAL" / "Nextval" / etc. to lowercase.
+	if strings.HasPrefix(result, "nextval(") && strings.HasSuffix(result, ")") {
+		return ""
+	}
+	return result
 }
 
 // WriteDiffsJSON writes multiple diffs as a JSON array to a file path.

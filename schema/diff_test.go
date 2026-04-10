@@ -287,6 +287,78 @@ func TestNormalizeDefault(t *testing.T) {
 	}
 }
 
+// TestNormalizeDefaultSequences covers issue #65 item 3: Postgres sequence-
+// backed defaults (nextval(...)) must canonicalize to the empty string so a
+// declared column with no explicit default matches a live column whose
+// default is the implicit sequence created by SERIAL, BIGSERIAL, or INTEGER
+// PRIMARY KEY. Literal string defaults like 'nextval' (inside quotes) must
+// not be collapsed.
+func TestNormalizeDefaultSequences(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		expect string
+	}{
+		{
+			name:   "postgres_serial_with_regclass_cast",
+			input:  "nextval('chuck_schema_test_id_seq'::regclass)",
+			expect: "",
+		},
+		{
+			name:   "postgres_qualified_sequence_name",
+			input:  "nextval('public.users_id_seq'::regclass)",
+			expect: "",
+		},
+		{
+			name:   "wrapped_in_outer_parens",
+			input:  "(nextval('seq'::regclass))",
+			expect: "",
+		},
+		{
+			name:   "uppercase_nextval",
+			input:  "NEXTVAL('seq'::regclass)",
+			expect: "",
+		},
+		{
+			name:   "surrounding_whitespace",
+			input:  "  nextval('seq'::regclass)  ",
+			expect: "",
+		},
+		{
+			name:   "no_regclass_cast",
+			input:  "nextval('seq')",
+			expect: "",
+		},
+		{
+			name:   "literal_string_nextval_preserved",
+			input:  "'nextval'",
+			expect: "'nextval'",
+		},
+		{
+			name:   "integer_literal_unchanged",
+			input:  "42",
+			expect: "42",
+		},
+		{
+			name:   "current_timestamp_lowercased",
+			input:  "CURRENT_TIMESTAMP",
+			expect: "current_timestamp",
+		},
+		{
+			name:   "empty_string_unchanged",
+			input:  "",
+			expect: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeDefault(tt.input)
+			assert.Equal(t, tt.expect, got, "normalizeDefault(%q)", tt.input)
+		})
+	}
+}
+
 func TestDiffSchemaIndexPropertyMismatch(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)

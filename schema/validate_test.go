@@ -577,6 +577,86 @@ func TestValidateImplicitUniqueIndexes(t *testing.T) {
 	}
 }
 
+// TestValidateSequenceBackedDefaults covers issue #65 item 3: the default
+// value comparator must recognize Postgres sequence-backed defaults
+// (nextval(...)) and canonicalize them to the empty string so a declared
+// column with no explicit default matches a live column whose default is
+// the implicit sequence created by SERIAL, BIGSERIAL, or INTEGER PRIMARY
+// KEY. Non-sequence defaults (including literal strings) must continue to
+// flag real drift.
+//
+// Each case builds a *TableDef with one column and a LiveTableSnapshot
+// with the corresponding live column, then calls validateAgainstLiveSnapshot
+// directly to avoid requiring a real database.
+func TestValidateSequenceBackedDefaults(t *testing.T) {
+	tests := []struct {
+		name            string
+		dialect         chuck.Dialect
+		declaredDefault string
+		liveDefault     string
+		wantDefaultErrs int
+	}{
+		{
+			name:            "postgres: empty declared matches nextval live",
+			dialect:         chuck.PostgresDialect{},
+			declaredDefault: "",
+			liveDefault:     "nextval('table_id_seq'::regclass)",
+			wantDefaultErrs: 0,
+		},
+		{
+			name:            "postgres: explicit zero declared vs nextval live is drift",
+			dialect:         chuck.PostgresDialect{},
+			declaredDefault: "0",
+			liveDefault:     "nextval('table_id_seq'::regclass)",
+			wantDefaultErrs: 1,
+		},
+		{
+			name:            "sqlite: empty declared matches empty live",
+			dialect:         chuck.SQLiteDialect{},
+			declaredDefault: "",
+			liveDefault:     "",
+			wantDefaultErrs: 0,
+		},
+		{
+			name:            "postgres: empty declared vs non-sequence live is drift",
+			dialect:         chuck.PostgresDialect{},
+			declaredDefault: "",
+			liveDefault:     "0",
+			wantDefaultErrs: 1,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			col := Col("id", TypeInt()).NotNull()
+			if tc.declaredDefault != "" {
+				col = col.Default(tc.declaredDefault)
+			}
+			td := NewTable("t").Columns(col)
+
+			live := LiveTableSnapshot{
+				Name: "t",
+				Columns: []LiveColumnSnapshot{
+					{Name: "id", Type: "INTEGER", Nullable: false, Default: tc.liveDefault},
+				},
+			}
+
+			tableName := tc.dialect.NormalizeIdentifier(td.Name)
+			errs := validateAgainstLiveSnapshot(td, tc.dialect, live, tableName)
+
+			var defaultErrs []SchemaError
+			for _, e := range errs {
+				if strings.Contains(e.Message, "default mismatch") {
+					defaultErrs = append(defaultErrs, e)
+				}
+			}
+
+			assert.Len(t, defaultErrs, tc.wantDefaultErrs,
+				"default-mismatch error count: got %v (full errs: %v)", defaultErrs, errs)
+		})
+	}
+}
+
 func TestDeclaredSingleColumnUniques(t *testing.T) {
 	t.Run("ColumnDef.Unique includes column", func(t *testing.T) {
 		td := NewTable("users").Columns(

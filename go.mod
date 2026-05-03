@@ -5,7 +5,7 @@ go 1.26.2
 require (
 	github.com/denisenkom/go-mssqldb v0.12.3
 	github.com/lib/pq v1.12.3
-	github.com/mattn/go-sqlite3 v1.14.42
+	github.com/mattn/go-sqlite3 v1.14.44
 	github.com/ncruces/go-sqlite3 v0.34.0
 	github.com/stretchr/testify v1.11.1
 )

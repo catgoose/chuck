@@ -47,7 +47,7 @@ func (d *DeleteBuilder) Build() (query string, args []any) {
 
 	tableName := d.table
 	if d.dialect != nil {
-		tableName = d.dialect.QuoteIdentifier(d.dialect.NormalizeIdentifier(d.table))
+		tableName = quoteTable(d.dialect, d.table)
 	}
 
 	parts = append(parts, fmt.Sprintf("DELETE FROM %s", tableName))

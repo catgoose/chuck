@@ -7,20 +7,10 @@ import (
 )
 
 // qualifyTable returns the dialect-rendered, quoted, fully-qualified table
-// identifier for the given ObjectName. Both the schema and name components are
-// normalized via the dialect before being quoted. SQLite ignores any schema
-// component because SQLite has no first-class schema namespace (see the issue
-// #72 SQLite fallback semantics).
-//
-// This is the single helper that DDL, seed SQL, and snapshot/inspection paths
-// share so qualified-name rendering does not fork across the codebase.
+// identifier for the given ObjectName. Delegates to chuck.QualifyTable so DDL,
+// seed SQL, snapshot/inspection, and dbrepo all share one rendering path.
 func qualifyTable(d chuck.Dialect, o chuck.ObjectName) string {
-	name := d.NormalizeIdentifier(o.Name)
-	if o.Schema == "" || d.Engine() == chuck.SQLite {
-		return d.QuoteIdentifier(name)
-	}
-	schema := d.NormalizeIdentifier(o.Schema)
-	return d.QuoteIdentifier(schema) + "." + d.QuoteIdentifier(name)
+	return chuck.QualifyTable(d, o)
 }
 
 // normalizedObject returns the dialect-normalized schema and name for the

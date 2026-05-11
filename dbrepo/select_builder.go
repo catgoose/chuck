@@ -89,7 +89,7 @@ func (s *SelectBuilder) Build() (query string, args []any) {
 	tableName := s.table
 	cols := s.cols
 	if s.dialect != nil {
-		tableName = quoteTable(s.dialect, s.table)
+		tableName = quoteJoinTarget(s.dialect, s.table)
 		cols = quoteDotQualifiedColumns(s.dialect, s.cols)
 	}
 	parts = append(parts, fmt.Sprintf("SELECT %s FROM %s", cols, tableName))
@@ -133,7 +133,7 @@ func (s *SelectBuilder) CountQuery() (query string, args []any) {
 	var parts []string
 	tableName := s.table
 	if s.dialect != nil {
-		tableName = quoteTable(s.dialect, s.table)
+		tableName = quoteJoinTarget(s.dialect, s.table)
 	}
 	parts = append(parts, fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName))
 

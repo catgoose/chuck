@@ -237,6 +237,55 @@ func TestUpsertIntoQ_QualifiedTable_SQLite_DropsSchema(t *testing.T) {
 	assert.NotContains(t, got, "sg.")
 }
 
+func TestSelectBuilder_AliasedFrom_MSSQL_SpaceAlias(t *testing.T) {
+	d := chuck.MSSQLDialect{}
+	sql, _ := NewSelect("sg.SalesAgents sa", "sa.ID").
+		WithDialect(d).
+		Build()
+	assert.Equal(t, "SELECT [sa].[ID] FROM [sg].[SalesAgents] sa", sql)
+}
+
+func TestSelectBuilder_AliasedFrom_Postgres_AsAlias(t *testing.T) {
+	d := chuck.PostgresDialect{}
+	sql, _ := NewSelect("sg.SalesAgents AS sa", "sa.ID").
+		WithDialect(d).
+		Build()
+	assert.Equal(t, `SELECT "sa"."id" FROM "sg"."sales_agents" AS sa`, sql)
+}
+
+func TestSelectBuilder_AliasedFrom_Postgres_Unqualified(t *testing.T) {
+	d := chuck.PostgresDialect{}
+	sql, _ := NewSelect("Users u", "u.ID").
+		WithDialect(d).
+		Build()
+	assert.Equal(t, `SELECT "u"."id" FROM "users" u`, sql)
+}
+
+func TestSelectBuilder_AliasedFrom_SQLite_AsAlias(t *testing.T) {
+	d := chuck.SQLiteDialect{}
+	sql, _ := NewSelect("Users AS u", "u.ID").
+		WithDialect(d).
+		Build()
+	assert.Equal(t, `SELECT "u"."ID" FROM "Users" AS u`, sql)
+}
+
+func TestSelectBuilder_AliasedFrom_SQLite_QualifiedDropsSchema(t *testing.T) {
+	d := chuck.SQLiteDialect{}
+	// SQLite has no schema; the schema component must be dropped, alias preserved.
+	sql, _ := NewSelect("sg.SalesAgents sa", "sa.ID").
+		WithDialect(d).
+		Build()
+	assert.Equal(t, `SELECT "sa"."ID" FROM "SalesAgents" sa`, sql)
+}
+
+func TestSelectBuilder_CountQuery_AliasedFrom_MSSQL(t *testing.T) {
+	d := chuck.MSSQLDialect{}
+	sql, _ := NewSelect("sg.SalesAgents sa", "sa.ID").
+		WithDialect(d).
+		CountQuery()
+	assert.Equal(t, "SELECT COUNT(*) FROM [sg].[SalesAgents] sa", sql)
+}
+
 func TestSelectBuilder_DerivedTablePassthrough(t *testing.T) {
 	d := chuck.PostgresDialect{}
 	// Derived-table targets contain parentheses and must be passed through

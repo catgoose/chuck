@@ -2,7 +2,6 @@ package schema
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/catgoose/chuck"
 )
@@ -42,16 +41,6 @@ func objectKey(o chuck.ObjectName) string {
 		return o.Name
 	}
 	return o.Schema + "." + o.Name
-}
-
-// objectKeyFor returns a dialect-normalized stable lookup key. Two ObjectNames
-// that normalize to the same identifier for the given dialect share a key.
-func objectKeyFor(d chuck.Dialect, o chuck.ObjectName) string {
-	schema, name := normalizedObject(d, o)
-	if schema == "" {
-		return name
-	}
-	return schema + "." + name
 }
 
 // createTableSQL renders a CREATE TABLE statement for the given object.
@@ -147,17 +136,4 @@ func resolveSchemaForInspection(d chuck.Dialect, o chuck.ObjectName) string {
 	default:
 		return ""
 	}
-}
-
-// trimQuoted strips leading/trailing whitespace from each comma-separated
-// segment of a column list and returns the cleaned segments.
-func trimColumnList(columns string) []string {
-	parts := strings.Split(columns, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if t := strings.TrimSpace(p); t != "" {
-			out = append(out, t)
-		}
-	}
-	return out
 }

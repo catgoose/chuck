@@ -800,6 +800,23 @@ dbrepo.SetClauseQ(d, "Name", "Email")           // `"name" = @Name, "email" = @E
 dbrepo.InsertIntoQ(d, "Users", "Name", "Email") // `INSERT INTO "users" ("name", "email") VALUES (@Name, @Email)`
 ```
 
+Schema-qualified table names (`schema.table`) are rendered with each part quoted separately. SQLite drops the schema component because it has no schema namespace:
+
+```go
+dbrepo.InsertIntoQ(mssql, "sg.SalesAgents", "Name")
+// INSERT INTO [sg].[SalesAgents] ([Name]) VALUES (@Name)
+
+dbrepo.NewSelect("sg.SalesAgents", "ID", "Name").WithDialect(pg).Build()
+// SELECT ID, Name FROM "sg"."sales_agents"
+
+dbrepo.NewSelect("Tasks", "Tasks.ID").
+    Join("sg.SalesAgents sa", "sa.ID = Tasks.AgentID").
+    WithDialect(mssql).Build()
+// SELECT [Tasks].[ID] FROM [Tasks] JOIN [sg].[SalesAgents] sa ON sa.ID = Tasks.AgentID
+```
+
+`SelectBuilder` column lists also accept three-part `schema.table.column` references; bare names and expressions (anything with whitespace or parentheses) pass through unquoted.
+
 Convert a map to deterministic named args for use with `db.ExecContext`:
 
 ```go

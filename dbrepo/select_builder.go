@@ -89,7 +89,7 @@ func (s *SelectBuilder) Build() (query string, args []any) {
 	tableName := s.table
 	cols := s.cols
 	if s.dialect != nil {
-		tableName = s.dialect.QuoteIdentifier(s.dialect.NormalizeIdentifier(s.table))
+		tableName = quoteJoinTarget(s.dialect, s.table)
 		cols = quoteDotQualifiedColumns(s.dialect, s.cols)
 	}
 	parts = append(parts, fmt.Sprintf("SELECT %s FROM %s", cols, tableName))
@@ -133,7 +133,7 @@ func (s *SelectBuilder) CountQuery() (query string, args []any) {
 	var parts []string
 	tableName := s.table
 	if s.dialect != nil {
-		tableName = s.dialect.QuoteIdentifier(s.dialect.NormalizeIdentifier(s.table))
+		tableName = quoteJoinTarget(s.dialect, s.table)
 	}
 	parts = append(parts, fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName))
 
@@ -152,25 +152,22 @@ func (s *SelectBuilder) CountQuery() (query string, args []any) {
 	return strings.Join(parts, " "), s.where.Args()
 }
 
-// quoteDotQualifiedColumns takes a comma-separated column list and quotes only
-// dot-qualified names (Table.Column) by quoting each part separately.
-// Simple column names are left as-is to preserve backward compatibility.
+// quoteDotQualifiedColumns takes a comma-separated column list and quotes
+// dot-qualified names by quoting each part separately:
+//
+//   - "Name"               -> "Name" (passthrough; preserves back-compat)
+//   - "Table.Column"       -> quoted Table.Column
+//   - "Schema.Table.Column" -> quoted Schema.Table.Column
 //
 // The input is split on "," (not ", ") and each token is whitespace-trimmed so
 // that variations like "u.ID,v.Name", "u.ID,  v.Name", and "u.ID , v.Name" all
-// parse the same way. Output is always rejoined with ", " for consistency.
+// parse the same way. Tokens with whitespace or parentheses (expressions,
+// derived references) are returned verbatim. Output is rejoined with ", ".
 func quoteDotQualifiedColumns(d chuck.Identifier, cols string) string {
 	parts := strings.Split(cols, ",")
 	result := make([]string, len(parts))
 	for i, col := range parts {
-		col = strings.TrimSpace(col)
-		if dotIdx := strings.Index(col, "."); dotIdx >= 0 {
-			table := col[:dotIdx]
-			column := col[dotIdx+1:]
-			result[i] = d.QuoteIdentifier(d.NormalizeIdentifier(table)) + "." + d.QuoteIdentifier(d.NormalizeIdentifier(column))
-		} else {
-			result[i] = col
-		}
+		result[i] = quoteQualifiedColumn(d, col)
 	}
 	return strings.Join(result, ", ")
 }
@@ -179,11 +176,17 @@ func quoteDotQualifiedColumns(d chuck.Identifier, cols string) string {
 // identifier and an optional alias.
 //
 // Supported shapes:
-//   - "Users"        -> base="Users", alias="",  asForm=false
-//   - "Users u"      -> base="Users", alias="u", asForm=false
-//   - "Orders AS o"  -> base="Orders", alias="o", asForm=true (AS preserved in
-//     the original case from the input)
-//   - "Orders as o"  -> base="Orders", alias="o", asForm=true
+//   - "Users"                 -> base="Users", alias="",  asForm=false
+//   - "Users u"               -> base="Users", alias="u", asForm=false
+//   - "Orders AS o"           -> base="Orders", alias="o", asForm=true
+//   - "Orders as o"           -> base="Orders", alias="o", asForm=true
+//   - "sg.SalesAgents"        -> base="sg.SalesAgents", alias="", asForm=false
+//   - "sg.SalesAgents sa"     -> base="sg.SalesAgents", alias="sa"
+//   - "sg.SalesAgents AS sa"  -> base="sg.SalesAgents", alias="sa", asForm=true
+//
+// Schema-qualified bases ("schema.table") are returned as a single token in
+// base; callers should pass that token through quoteTable to render the
+// dialect-correct quoted form.
 //
 // Ambiguous or unsupported shapes (empty input, anything containing
 // parentheses such as derived tables/subqueries, or expressions with more
@@ -216,9 +219,11 @@ func parseJoinTarget(s string) (base, alias, asKeyword string) {
 }
 
 // quoteJoinTarget applies dialect quoting to a JOIN target while preserving
-// any alias tokens unchanged. Only the base table identifier is normalized
-// and quoted; aliases (with or without the AS keyword) are emitted literally
-// so callers can match them in ON/WHERE clauses without surprise casing.
+// any alias tokens unchanged. The base table identifier — which may be
+// schema-qualified ("sg.SalesAgents") — is rendered through chuck.QualifyTable
+// so each part is quoted separately and SQLite drops the schema component.
+// Aliases (with or without the AS keyword) are emitted literally so callers
+// can match them in ON/WHERE clauses without surprise casing.
 //
 // If the target shape is ambiguous (derived tables, more than three tokens,
 // etc.) parseJoinTarget yields an empty base and the full original input is
@@ -229,7 +234,7 @@ func quoteJoinTarget(d chuck.Dialect, target string) string {
 		// Ambiguous shape: fall back to the raw input unchanged.
 		return alias
 	}
-	quoted := d.QuoteIdentifier(d.NormalizeIdentifier(base))
+	quoted := chuck.QualifyTable(d, chuck.ParseObjectName(base))
 	switch {
 	case alias == "":
 		return quoted

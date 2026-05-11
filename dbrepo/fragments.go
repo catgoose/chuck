@@ -84,13 +84,17 @@ func SetClauseQ(d chuck.Identifier, cols ...string) string {
 }
 
 // InsertIntoQ builds a full INSERT INTO … VALUES … statement with dialect quoting.
+// Schema-qualified table names ("sg.SalesAgents") are rendered with each part
+// quoted separately when d is a chuck.Dialect; SQLite drops the schema.
 //
 //	InsertIntoQ(d, "Users", "Name", "Email") =>
 //	  `INSERT INTO "users" ("name", "email") VALUES (@Name, @Email)` (Postgres)
 //	  `INSERT INTO "Users" ("Name", "Email") VALUES (@Name, @Email)` (SQLite)
+//	InsertIntoQ(mssql, "sg.SalesAgents", "Name") =>
+//	  `INSERT INTO [sg].[SalesAgents] ([Name]) VALUES (@Name)`
 func InsertIntoQ(d chuck.Identifier, table string, cols ...string) string {
 	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-		d.QuoteIdentifier(d.NormalizeIdentifier(table)), ColumnsQ(d, cols...), Placeholders(cols...))
+		quoteTableIdent(d, table), ColumnsQ(d, cols...), Placeholders(cols...))
 }
 
 // BulkInsertInto builds a multi-row INSERT INTO … VALUES … statement with
@@ -111,7 +115,7 @@ func InsertIntoQ(d chuck.Identifier, table string, cols ...string) string {
 //	BulkInsertInto(pgDialect, "users", []string{"name", "email"}, 3)
 //	// => INSERT INTO "users" ("name", "email") VALUES ($1, $2), ($3, $4), ($5, $6)
 func BulkInsertInto(d chuck.Dialect, table string, cols []string, rowCount int) string {
-	quotedTable := d.QuoteIdentifier(d.NormalizeIdentifier(table))
+	quotedTable := quoteTable(d, table)
 	quotedCols := make([]string, len(cols))
 	for i, c := range cols {
 		quotedCols[i] = d.QuoteIdentifier(d.NormalizeIdentifier(c))
@@ -143,10 +147,19 @@ func BulkInsertInto(d chuck.Dialect, table string, cols []string, rowCount int) 
 func UpsertInto(d chuck.Dialect, table string, conflictCols []string, cols ...string) string {
 	updateCols := nonConflictCols(cols, conflictCols)
 	updateSet := upsertSetClause(d, updateCols)
-	return d.Upsert(table, Columns(cols...), Placeholders(cols...), Columns(conflictCols...), updateSet)
+	on := chuck.ParseObjectName(strings.TrimSpace(table))
+	if on.Schema == "" {
+		return d.Upsert(table, Columns(cols...), Placeholders(cols...), Columns(conflictCols...), updateSet)
+	}
+	if d.Engine() == chuck.SQLite {
+		return d.Upsert(on.Name, Columns(cols...), Placeholders(cols...), Columns(conflictCols...), updateSet)
+	}
+	return renderQualifiedUpsert(d, on, Columns(cols...), Placeholders(cols...), Columns(conflictCols...), updateSet)
 }
 
 // UpsertIntoQ builds a dialect-aware UPSERT statement with identifier quoting.
+// Schema-qualified table names ("sg.SalesAgents") are rendered with each part
+// quoted separately; SQLite drops the schema component.
 //
 //	UpsertIntoQ(pgDialect, "Users", []string{"Email"}, "Email", "Name", "Age") =>
 //	  INSERT INTO "Users" ("Email", "Name", "Age") VALUES (@Email, @Name, @Age)
@@ -154,7 +167,67 @@ func UpsertInto(d chuck.Dialect, table string, conflictCols []string, cols ...st
 func UpsertIntoQ(d chuck.Dialect, table string, conflictCols []string, cols ...string) string {
 	updateCols := nonConflictCols(cols, conflictCols)
 	updateSet := upsertSetClauseQ(d, updateCols)
-	return d.Upsert(d.NormalizeIdentifier(table), ColumnsQ(d, cols...), Placeholders(cols...), ColumnsQ(d, conflictCols...), updateSet)
+	on := chuck.ParseObjectName(strings.TrimSpace(table))
+	if on.Schema == "" {
+		return d.Upsert(d.NormalizeIdentifier(table), ColumnsQ(d, cols...), Placeholders(cols...), ColumnsQ(d, conflictCols...), updateSet)
+	}
+	if d.Engine() == chuck.SQLite {
+		return d.Upsert(d.NormalizeIdentifier(on.Name), ColumnsQ(d, cols...), Placeholders(cols...), ColumnsQ(d, conflictCols...), updateSet)
+	}
+	return renderQualifiedUpsert(d, on, ColumnsQ(d, cols...), Placeholders(cols...), ColumnsQ(d, conflictCols...), updateSet)
+}
+
+// renderQualifiedUpsert builds an UPSERT statement for a schema-qualified
+// target. Reproduces the dialect's own Upsert template using a pre-rendered
+// schema.table token so qualified names render with each part quoted
+// separately (e.g. [sg].[Agents] on MSSQL).
+func renderQualifiedUpsert(d chuck.Dialect, target chuck.ObjectName, columns, values, conflictColumns, updateSet string) string {
+	qt := chuck.QualifyTable(d, target)
+	switch d.Engine() {
+	case chuck.Postgres:
+		return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
+			qt, columns, values, conflictColumns, updateSet)
+	case chuck.MSSQL:
+		parts := strings.Split(conflictColumns, ", ")
+		onParts := make([]string, len(parts))
+		for i, col := range parts {
+			col = strings.TrimSpace(col)
+			onParts[i] = fmt.Sprintf("Target.%s = Source.%s", col, col)
+		}
+		onClause := strings.Join(onParts, " AND ")
+		return fmt.Sprintf(
+			"MERGE %s AS Target USING (VALUES (%s)) AS Source (%s) ON %s WHEN MATCHED THEN UPDATE SET %s WHEN NOT MATCHED THEN INSERT (%s) VALUES (%s);",
+			qt, values, columns, onClause, updateSet, columns, values,
+		)
+	default:
+		return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
+			qt, columns, values, conflictColumns, updateSet)
+	}
+}
+
+// quoteTableIdent applies dialect identifier quoting to a possibly
+// schema-qualified table name. Accepts chuck.Identifier so it works with the
+// existing InsertInto* signatures; if the identifier is also a Dialect the
+// engine-aware path (SQLite schema drop) kicks in.
+func quoteTableIdent(d chuck.Identifier, table string) string {
+	trimmed := strings.TrimSpace(table)
+	if trimmed == "" {
+		return table
+	}
+	if strings.ContainsAny(trimmed, " \t()") {
+		return table
+	}
+	on := chuck.ParseObjectName(trimmed)
+	if dialect, ok := d.(chuck.Dialect); ok {
+		return chuck.QualifyTable(dialect, on)
+	}
+	// Non-Dialect Identifier: fall back to per-part quoting without engine-
+	// aware schema handling. SQLite passes through as a Dialect, so we only
+	// reach this branch from synthetic Identifier-only callers/tests.
+	if on.Schema == "" {
+		return d.QuoteIdentifier(d.NormalizeIdentifier(on.Name))
+	}
+	return d.QuoteIdentifier(d.NormalizeIdentifier(on.Schema)) + "." + d.QuoteIdentifier(d.NormalizeIdentifier(on.Name))
 }
 
 // nonConflictCols returns columns from cols that are not in conflictCols.

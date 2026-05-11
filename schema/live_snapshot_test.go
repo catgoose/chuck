@@ -333,26 +333,28 @@ func TestLiveSnapshotPartialIndex(t *testing.T) {
 	assert.Equal(t, "Status = 'open'", snap.Indexes[0].Where)
 }
 
-func TestPostgresColumnQueryScopesToPublicSchema(t *testing.T) {
-	// The Postgres column query must join pg_namespace to constrain
-	// pg_class lookups to the public schema, preventing cross-schema matches.
+func TestPostgresColumnQueryScopesBySchema(t *testing.T) {
+	// The Postgres column query must join pg_namespace and constrain by the
+	// schema parameter so cross-schema matches do not occur. Schema is now
+	// passed as a bound parameter ($1) rather than hardcoded, so qualified
+	// tables in non-public schemas can be inspected.
 	assert.Contains(t, postgresColumnQuery, "pg_namespace",
 		"Postgres column query should reference pg_namespace")
 	assert.Contains(t, postgresColumnQuery, "n.oid = t.relnamespace",
 		"Postgres column query should join pg_namespace on relnamespace")
-	assert.Contains(t, postgresColumnQuery, "n.nspname = 'public'",
-		"Postgres column query should constrain to public schema")
+	assert.Contains(t, postgresColumnQuery, "c.table_schema = $1",
+		"Postgres column query should constrain by the schema parameter")
 }
 
-func TestPostgresIndexQueryScopesToPublicSchema(t *testing.T) {
-	// The Postgres index query must join pg_namespace to constrain
-	// pg_class lookups to the public schema, preventing cross-schema matches.
+func TestPostgresIndexQueryScopesBySchema(t *testing.T) {
+	// The Postgres index query must join pg_namespace and constrain by the
+	// schema parameter so cross-schema matches do not occur.
 	assert.Contains(t, postgresIndexQuery, "pg_namespace",
 		"Postgres index query should reference pg_namespace")
 	assert.Contains(t, postgresIndexQuery, "n.oid = t.relnamespace",
 		"Postgres index query should join pg_namespace on relnamespace")
-	assert.Contains(t, postgresIndexQuery, "n.nspname = 'public'",
-		"Postgres index query should constrain to public schema")
+	assert.Contains(t, postgresIndexQuery, "n.nspname = $1",
+		"Postgres index query should constrain by the schema parameter")
 }
 
 func TestMSSQLIndexQueryExcludesIncludedColumns(t *testing.T) {

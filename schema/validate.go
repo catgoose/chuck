@@ -37,14 +37,25 @@ func (e SchemaError) Error() string {
 //
 // Returns nil if the live schema matches the declaration.
 func ValidateSchema(ctx context.Context, db *sql.DB, d chuck.Dialect, td *TableDef) []SchemaError {
-	tableName := d.NormalizeIdentifier(td.Name)
+	displayName := displayQualifiedName(d, td.Object())
 
-	live, err := LiveSnapshot(ctx, db, d, tableName)
+	live, err := LiveSnapshotObject(ctx, db, d, td.Object())
 	if err != nil {
-		return []SchemaError{{Table: tableName, Message: err.Error()}}
+		return []SchemaError{{Table: displayName, Message: err.Error()}}
 	}
 
-	return validateAgainstLiveSnapshot(td, d, live, tableName)
+	return validateAgainstLiveSnapshot(td, d, live, displayName)
+}
+
+// displayQualifiedName returns a human-readable "schema.name" string for use
+// in error messages and diff Table fields. SQLite-flattened identifiers omit
+// the schema. Bare unqualified tables render as just the name.
+func displayQualifiedName(d chuck.Dialect, o chuck.ObjectName) string {
+	schema, name := normalizedObject(d, o)
+	if schema == "" {
+		return name
+	}
+	return schema + "." + name
 }
 
 // validateAgainstLiveSnapshot is the pure comparison core of ValidateSchema:

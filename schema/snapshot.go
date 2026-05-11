@@ -17,6 +17,7 @@ type ColumnSnapshot struct {
 	AutoIncr   bool   `json:"auto_increment,omitempty"`
 	Mutable    bool   `json:"mutable"`
 	Default    string `json:"default,omitempty"`
+	RefSchema  string `json:"references_schema,omitempty"`
 	RefTable   string `json:"references_table,omitempty"`
 	RefColumn  string `json:"references_column,omitempty"`
 	OnDelete   string `json:"on_delete,omitempty"`
@@ -33,23 +34,36 @@ type IndexSnapshot struct {
 }
 
 // TableSnapshot describes a table's full resolved schema for a given dialect.
+//
+// Schema is the dialect-normalized schema namespace when the table is
+// schema-qualified, or "" otherwise. Name is always the bare table name
+// (without schema prefix) for back-compat with consumers that only inspect
+// Name. Use Object() for structured access to (schema, name).
 type TableSnapshot struct {
-	Name              string             `json:"name"`
-	Columns           []ColumnSnapshot   `json:"columns"`
-	Indexes           []IndexSnapshot    `json:"indexes,omitempty"`
-	UniqueConstraints [][]string         `json:"unique_constraints,omitempty"`
-	HasSoftDelete     bool               `json:"has_soft_delete,omitempty"`
-	HasVersion        bool               `json:"has_version,omitempty"`
-	HasExpiry         bool               `json:"has_expiry,omitempty"`
-	HasArchive        bool               `json:"has_archive,omitempty"`
+	Schema            string           `json:"schema,omitempty"`
+	Name              string           `json:"name"`
+	Columns           []ColumnSnapshot `json:"columns"`
+	Indexes           []IndexSnapshot  `json:"indexes,omitempty"`
+	UniqueConstraints [][]string       `json:"unique_constraints,omitempty"`
+	HasSoftDelete     bool             `json:"has_soft_delete,omitempty"`
+	HasVersion        bool             `json:"has_version,omitempty"`
+	HasExpiry         bool             `json:"has_expiry,omitempty"`
+	HasArchive        bool             `json:"has_archive,omitempty"`
+}
+
+// Object returns the structured ObjectName captured in the snapshot.
+func (s TableSnapshot) Object() chuck.ObjectName {
+	return chuck.ObjectName{Schema: s.Schema, Name: s.Name}
 }
 
 // Snapshot returns a structured, dialect-resolved representation of the table schema.
 // The output is useful for diffing against a live database or serializing to JSON
 // for CI validation.
 func (t *TableDef) Snapshot(d chuck.Dialect) TableSnapshot {
+	schema, name := normalizedObject(d, t.Object())
 	snap := TableSnapshot{
-		Name:          d.NormalizeIdentifier(t.Name),
+		Schema:        schema,
+		Name:          name,
 		HasSoftDelete: t.hasSoftDelete,
 		HasVersion:    t.hasVersion,
 		HasExpiry:     t.hasExpiry,
@@ -71,8 +85,10 @@ func (t *TableDef) Snapshot(d chuck.Dialect) TableSnapshot {
 		} else if c.defaultVal != "" {
 			cs.Default = c.defaultVal
 		}
-		if c.refTable != "" {
-			cs.RefTable = d.NormalizeIdentifier(c.refTable)
+		if c.refObject.Name != "" {
+			refSchema, refName := normalizedObject(d, c.refObject)
+			cs.RefSchema = refSchema
+			cs.RefTable = refName
 			cs.RefColumn = d.NormalizeIdentifier(c.refColumn)
 			cs.OnDelete = c.onDelete
 			cs.OnUpdate = c.onUpdate
@@ -108,7 +124,11 @@ func (t *TableDef) SnapshotString(d chuck.Dialect) string {
 	snap := t.Snapshot(d)
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "TABLE %s\n", snap.Name)
+	if snap.Schema != "" {
+		fmt.Fprintf(&b, "TABLE %s.%s\n", snap.Schema, snap.Name)
+	} else {
+		fmt.Fprintf(&b, "TABLE %s\n", snap.Name)
+	}
 
 	for _, c := range snap.Columns {
 		var parts []string
@@ -130,7 +150,11 @@ func (t *TableDef) SnapshotString(d chuck.Dialect) string {
 			parts = append(parts, "DEFAULT "+c.Default)
 		}
 		if c.RefTable != "" {
-			ref := fmt.Sprintf("REFERENCES %s(%s)", c.RefTable, c.RefColumn)
+			target := c.RefTable
+			if c.RefSchema != "" {
+				target = c.RefSchema + "." + c.RefTable
+			}
+			ref := fmt.Sprintf("REFERENCES %s(%s)", target, c.RefColumn)
 			if c.OnDelete != "" {
 				ref += " ON DELETE " + c.OnDelete
 			}

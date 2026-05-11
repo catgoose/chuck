@@ -8,6 +8,32 @@ import (
 	"strings"
 )
 
+// ObjectName is a structured database object identity composed of an optional
+// schema and a required name. It is used internally to model schema-qualified
+// tables and foreign-key targets so that dialects can render correctly
+// qualified identifiers without resorting to dotted-string parsing.
+type ObjectName struct {
+	Schema string
+	Name   string
+}
+
+// IsZero reports whether the ObjectName has neither schema nor name set.
+func (o ObjectName) IsZero() bool { return o.Schema == "" && o.Name == "" }
+
+// String returns "schema.name" when a schema is set, otherwise just "name".
+// The output is for logging/diagnostics and is not quoted or normalized.
+func (o ObjectName) String() string {
+	if o.Schema == "" {
+		return o.Name
+	}
+	return o.Schema + "." + o.Name
+}
+
+// Equal reports whether two ObjectNames have the same schema and name.
+func (o ObjectName) Equal(other ObjectName) bool {
+	return o.Schema == other.Schema && o.Name == other.Name
+}
+
 // Engine identifies a database engine.
 type Engine string
 

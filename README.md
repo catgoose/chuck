@@ -228,7 +228,7 @@ schema.Col("Code", schema.TypeVarchar(10)).PrimaryKey().NotNull()
 
 ### Foreign Key References
 
-`References` defines a foreign key. Chain `OnDelete` and `OnUpdate` for referential actions:
+`References` defines a foreign key against an unqualified target. Chain `OnDelete` and `OnUpdate` for referential actions:
 
 ```go
 schema.Col("TaskID", schema.TypeInt()).NotNull().
@@ -238,7 +238,28 @@ schema.Col("AssigneeID", schema.TypeInt()).
     References("Users", "ID").OnDelete("SET NULL").OnUpdate("CASCADE")
 ```
 
+For schema-qualified targets use `ReferencesQualified` (or `ReferencesObject` with a `chuck.ObjectName`):
+
+```go
+schema.Col("AgentID", schema.TypeInt()).NotNull().
+    ReferencesQualified("sg", "SalesAgents", "ID")
+```
+
 Supported actions: `CASCADE`, `SET NULL`, `SET DEFAULT`, `RESTRICT`, `NO ACTION`.
+
+### Schema-Qualified Tables
+
+Tables can declare a schema namespace that is preserved through DDL generation, foreign-key metadata, snapshots, validation, diffing, ensure, and live introspection:
+
+```go
+schema.NewTable("SalesAgents").WithSchema("sg")
+// or equivalently:
+schema.NewQualifiedTable("sg", "SalesAgents")
+```
+
+On MSSQL this renders as `[sg].[SalesAgents]`; on Postgres as `"sg"."sales_agents"` (with the usual identifier normalization). Dependency ordering keys on the fully qualified `(schema, name)` pair, so `sg.SalesAgents` and `cl.SalesAgents` are treated as distinct nodes.
+
+**SQLite fallback.** SQLite has no schema namespace, so the schema component is dropped from emitted SQL. When two declared schema-qualified tables would collapse to the same bare SQLite table name (e.g. `sg.SalesAgents` and `cl.SalesAgents`), `Ensure` and `CheckSchemaCompatibility` fail fast with `ErrSQLiteSchemaCollision` rather than silently merging them.
 
 ### CHECK Constraints
 

@@ -42,42 +42,43 @@ func (idx IndexDef) Where(condition string) IndexDef {
 }
 
 // ddlIfNotExists renders the CREATE INDEX IF NOT EXISTS statement for the given
-// dialect and table name.
-func (idx IndexDef) ddlIfNotExists(d chuck.Dialect, tableName string) string {
-	return idx.renderDDL(d, tableName, true)
+// dialect and table object.
+func (idx IndexDef) ddlIfNotExists(d chuck.Dialect, table chuck.ObjectName) string {
+	return idx.renderDDL(d, table, true)
 }
 
-// ddl renders the CREATE INDEX statement for the given dialect and table name.
-func (idx IndexDef) ddl(d chuck.Dialect, tableName string) string {
-	return idx.renderDDL(d, tableName, false)
+// ddl renders the CREATE INDEX statement for the given dialect and table object.
+func (idx IndexDef) ddl(d chuck.Dialect, table chuck.ObjectName) string {
+	return idx.renderDDL(d, table, false)
 }
 
-func (idx IndexDef) renderDDL(d chuck.Dialect, tableName string, ifNotExists bool) string {
-	// For plain indexes (no unique, no where), delegate to the dialect's existing method
-	// to preserve backward compatibility with the original DDL output.
-	if !idx.unique && idx.where == "" {
+func (idx IndexDef) renderDDL(d chuck.Dialect, table chuck.ObjectName, ifNotExists bool) string {
+	// Unqualified plain index can route through the dialect helper to preserve
+	// existing byte-identical output for callers that have snapshot expectations.
+	if (table.Schema == "" || d.Engine() == chuck.SQLite) && !idx.unique && idx.where == "" {
+		bare := d.NormalizeIdentifier(table.Name)
 		if ifNotExists {
-			return d.CreateIndexIfNotExists(idx.name, tableName, idx.columns)
+			return d.CreateIndexIfNotExists(idx.name, bare, idx.columns)
 		}
-		return idx.buildCreateIndex(d, tableName, false)
+		return idx.buildStandardIndex(d, table, false)
 	}
 
-	return idx.buildCreateIndex(d, tableName, ifNotExists)
+	return idx.buildCreateIndex(d, table, ifNotExists)
 }
 
 // buildCreateIndex builds the full CREATE INDEX statement with support for
 // UNIQUE and WHERE clauses across all dialects.
-func (idx IndexDef) buildCreateIndex(d chuck.Dialect, tableName string, ifNotExists bool) string {
+func (idx IndexDef) buildCreateIndex(d chuck.Dialect, table chuck.ObjectName, ifNotExists bool) string {
 	switch d.Engine() {
 	case chuck.MSSQL:
-		return idx.buildMSSQLIndex(d, tableName, ifNotExists)
+		return idx.buildMSSQLIndex(d, table, ifNotExists)
 	default:
-		return idx.buildStandardIndex(d, tableName, ifNotExists)
+		return idx.buildStandardIndex(d, table, ifNotExists)
 	}
 }
 
 // buildStandardIndex generates CREATE INDEX for Postgres and SQLite.
-func (idx IndexDef) buildStandardIndex(d chuck.Dialect, tableName string, ifNotExists bool) string {
+func (idx IndexDef) buildStandardIndex(d chuck.Dialect, table chuck.ObjectName, ifNotExists bool) string {
 	s := "CREATE "
 	if idx.unique {
 		s += "UNIQUE "
@@ -88,7 +89,7 @@ func (idx IndexDef) buildStandardIndex(d chuck.Dialect, tableName string, ifNotE
 	}
 	s += fmt.Sprintf("%s ON %s(%s)",
 		d.QuoteIdentifier(idx.name),
-		d.QuoteIdentifier(tableName),
+		qualifyTable(d, table),
 		chuck.QuoteColumns(d, idx.columns),
 	)
 	if idx.where != "" {
@@ -99,9 +100,9 @@ func (idx IndexDef) buildStandardIndex(d chuck.Dialect, tableName string, ifNotE
 
 // buildMSSQLIndex generates CREATE INDEX for MSSQL, using the IF NOT EXISTS
 // pattern with sys.indexes.
-func (idx IndexDef) buildMSSQLIndex(d chuck.Dialect, tableName string, ifNotExists bool) string {
+func (idx IndexDef) buildMSSQLIndex(d chuck.Dialect, table chuck.ObjectName, ifNotExists bool) string {
 	qi := d.QuoteIdentifier(idx.name)
-	qt := d.QuoteIdentifier(tableName)
+	qt := qualifyTable(d, table)
 
 	create := "CREATE "
 	if idx.unique {
@@ -116,10 +117,17 @@ func (idx IndexDef) buildMSSQLIndex(d chuck.Dialect, tableName string, ifNotExis
 		return create
 	}
 
-	// Wrap in IF NOT EXISTS check using sys.indexes
+	// Wrap in IF NOT EXISTS check using sys.indexes; OBJECT_ID takes the
+	// schema-qualified object literal so the right table is matched even
+	// when the same bare name exists under multiple schemas.
+	schema, name := normalizedObject(d, table)
+	objArg := name
+	if schema != "" {
+		objArg = schema + "." + name
+	}
 	return fmt.Sprintf(
 		"IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = N'%s' AND object_id = OBJECT_ID(N'%s')) %s",
-		escapeQuote(idx.name), escapeQuote(tableName), create,
+		escapeQuote(idx.name), escapeQuote(objArg), create,
 	)
 }
 

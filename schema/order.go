@@ -4,12 +4,18 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/catgoose/chuck"
 )
 
 // CreationOrder returns tables sorted so that foreign key dependencies are
 // satisfied: parents appear before children. Self-referential foreign keys
 // (a table referencing itself) are allowed and do not constitute a cycle.
 // Tables with no FK dependencies may appear in any stable order.
+//
+// Dependency ordering keys on fully qualified identity (schema + name) so two
+// declared tables with the same bare name but different schemas (e.g.
+// sg.SalesAgents and cl.SalesAgents) are treated as distinct.
 func CreationOrder(tables ...*TableDef) ([]*TableDef, error) {
 	return topoSort(tables, false)
 }
@@ -20,58 +26,61 @@ func DropOrder(tables ...*TableDef) ([]*TableDef, error) {
 	return topoSort(tables, true)
 }
 
-// topoSort performs a topological sort using Kahn's algorithm.
-// If reverse is true, the result is reversed (drop order).
+// topoSort performs a topological sort using Kahn's algorithm. Tables are
+// keyed by their fully qualified ObjectName so that schema-qualified
+// duplicates of the same bare table name resolve to distinct nodes.
 func topoSort(tables []*TableDef, reverse bool) ([]*TableDef, error) {
-	// Build a name -> table index.
-	byName := make(map[string]*TableDef, len(tables))
-	for _, t := range tables {
-		byName[t.Name] = t
+	byKey := make(map[string]*TableDef, len(tables))
+	keys := make([]string, len(tables))
+	for i, t := range tables {
+		k := objectKey(t.Object())
+		byKey[k] = t
+		keys[i] = k
 	}
 
-	// Build adjacency: edges go from dependency (parent) -> dependent (child).
-	// inDegree counts how many parents each table has.
+	// Build edges and in-degrees keyed by qualified identity. Foreign-key
+	// targets without an explicit schema can match either a same-schema
+	// declared table or an unqualified declared table — pick the more
+	// specific match first so multi-schema graphs resolve correctly.
 	inDegree := make(map[string]int, len(tables))
-	// children[parent] = list of child table names
 	children := make(map[string][]string, len(tables))
 
-	for _, t := range tables {
-		if _, ok := inDegree[t.Name]; !ok {
-			inDegree[t.Name] = 0
+	for i, t := range tables {
+		key := keys[i]
+		if _, ok := inDegree[key]; !ok {
+			inDegree[key] = 0
 		}
 		for _, col := range t.cols {
-			ref := col.refTable
-			if ref == "" {
+			target := col.refObject
+			if target.Name == "" {
 				continue
 			}
-			// Skip self-references — not a real dependency edge.
-			if ref == t.Name {
+			refKey := resolveRefKey(byKey, t, target)
+			if refKey == "" {
 				continue
 			}
-			// Only count references to tables in the input set.
-			if _, ok := byName[ref]; !ok {
+			if refKey == key {
 				continue
 			}
-			inDegree[t.Name]++
-			children[ref] = append(children[ref], t.Name)
+			inDegree[key]++
+			children[refKey] = append(children[refKey], key)
 		}
 	}
 
-	// Seed queue with tables that have no dependencies.
 	var queue []string
-	for _, t := range tables {
-		if inDegree[t.Name] == 0 {
-			queue = append(queue, t.Name)
+	for _, k := range keys {
+		if inDegree[k] == 0 {
+			queue = append(queue, k)
 		}
 	}
 
 	var sorted []*TableDef
 	for len(queue) > 0 {
-		name := queue[0]
+		k := queue[0]
 		queue = queue[1:]
-		sorted = append(sorted, byName[name])
+		sorted = append(sorted, byKey[k])
 
-		for _, child := range children[name] {
+		for _, child := range children[k] {
 			inDegree[child]--
 			if inDegree[child] == 0 {
 				queue = append(queue, child)
@@ -80,11 +89,10 @@ func topoSort(tables []*TableDef, reverse bool) ([]*TableDef, error) {
 	}
 
 	if len(sorted) != len(tables) {
-		// Find tables involved in the cycle for a useful error message.
 		var cycled []string
-		for _, t := range tables {
-			if inDegree[t.Name] > 0 {
-				cycled = append(cycled, t.Name)
+		for _, k := range keys {
+			if inDegree[k] > 0 {
+				cycled = append(cycled, k)
 			}
 		}
 		return nil, fmt.Errorf("%w: %s", ErrCyclicDependency, strings.Join(cycled, ", "))
@@ -97,6 +105,32 @@ func topoSort(tables []*TableDef, reverse bool) ([]*TableDef, error) {
 	}
 
 	return sorted, nil
+}
+
+// resolveRefKey returns the byKey lookup key that target resolves to within
+// the declared set, or "" if the target is not in the set. When the target
+// has no explicit schema, the search first tries the parent table's schema
+// (intra-schema reference), then falls back to an unqualified declaration.
+func resolveRefKey(byKey map[string]*TableDef, parent *TableDef, target chuck.ObjectName) string {
+	if target.Schema != "" {
+		k := objectKey(target)
+		if _, ok := byKey[k]; ok {
+			return k
+		}
+		return ""
+	}
+	// No explicit schema: prefer same-schema target, then unqualified.
+	if parent.schema != "" {
+		k := objectKey(chuck.ObjectName{Schema: parent.schema, Name: target.Name})
+		if _, ok := byKey[k]; ok {
+			return k
+		}
+	}
+	k := objectKey(target)
+	if _, ok := byKey[k]; ok {
+		return k
+	}
+	return ""
 }
 
 // ErrCyclicDependency is returned when tables have circular foreign key references.

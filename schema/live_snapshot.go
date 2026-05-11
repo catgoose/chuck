@@ -28,47 +28,56 @@ type LiveIndexSnapshot struct {
 // LiveTableSnapshot describes a table's actual schema as read from a live database.
 // Compare against TableSnapshot (from Snapshot()) to detect schema drift.
 type LiveTableSnapshot struct {
+	Schema  string               `json:"schema,omitempty"`
 	Name    string               `json:"name"`
 	Columns []LiveColumnSnapshot `json:"columns"`
 	Indexes []LiveIndexSnapshot  `json:"indexes,omitempty"`
 }
 
-// LiveSnapshot queries the database and returns the actual schema for a table.
-// The result can be compared against a declared Snapshot() to detect drift.
-func LiveSnapshot(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName string) (LiveTableSnapshot, error) {
-	snap := LiveTableSnapshot{Name: tableName}
+// Object returns the structured ObjectName captured in the live snapshot.
+func (s LiveTableSnapshot) Object() chuck.ObjectName {
+	return chuck.ObjectName{Schema: s.Schema, Name: s.Name}
+}
 
-	// Check table exists
-	var exists interface{}
-	if err := db.QueryRowContext(ctx, d.TableExistsQuery(), tableName).Scan(&exists); err != nil {
-		if err == sql.ErrNoRows {
-			return snap, fmt.Errorf("table %q does not exist", tableName)
-		}
-		return snap, fmt.Errorf("check table %q: %w", tableName, err)
+// LiveSnapshot queries the database and returns the actual schema for an
+// unqualified table. Equivalent to LiveSnapshotObject with no schema; kept
+// for back-compat.
+func LiveSnapshot(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName string) (LiveTableSnapshot, error) {
+	return LiveSnapshotObject(ctx, db, d, chuck.ObjectName{Name: tableName})
+}
+
+// LiveSnapshotObject queries the database and returns the actual schema for a
+// schema-qualified table. SQLite ignores any schema component; Postgres
+// defaults to "public" and MSSQL defaults to "dbo" when target.Schema is "".
+func LiveSnapshotObject(ctx context.Context, db *sql.DB, d chuck.Dialect, target chuck.ObjectName) (LiveTableSnapshot, error) {
+	schema, name := normalizedObject(d, target)
+	snap := LiveTableSnapshot{Schema: schema, Name: name}
+	inspectSchema := resolveSchemaForInspection(d, target)
+
+	if err := checkTableExists(ctx, db, d, inspectSchema, name); err != nil {
+		return snap, err
 	}
 
-	// Query column details
-	cols, err := queryColumns(ctx, db, d, tableName)
+	cols, err := queryColumns(ctx, db, d, inspectSchema, name)
 	if err != nil {
-		return snap, fmt.Errorf("query columns for %q: %w", tableName, err)
+		return snap, fmt.Errorf("query columns for %q: %w", target.String(), err)
 	}
 	snap.Columns = cols
 
-	// Query indexes
-	indexes, err := queryIndexes(ctx, db, d, tableName)
+	indexes, err := queryIndexes(ctx, db, d, inspectSchema, name)
 	if err != nil {
-		return snap, fmt.Errorf("query indexes for %q: %w", tableName, err)
+		return snap, fmt.Errorf("query indexes for %q: %w", target.String(), err)
 	}
 	snap.Indexes = indexes
 
 	return snap, nil
 }
 
-// LiveSchemaSnapshot queries the database for all listed tables and returns their live schemas.
+// LiveSchemaSnapshot queries the database for all listed unqualified tables.
 func LiveSchemaSnapshot(ctx context.Context, db *sql.DB, d chuck.Dialect, tableNames ...string) ([]LiveTableSnapshot, error) {
 	snaps := make([]LiveTableSnapshot, 0, len(tableNames))
 	for _, name := range tableNames {
-		snap, err := LiveSnapshot(ctx, db, d, name)
+		snap, err := LiveSnapshotObject(ctx, db, d, chuck.ObjectName{Name: name})
 		if err != nil {
 			return nil, err
 		}
@@ -77,12 +86,65 @@ func LiveSchemaSnapshot(ctx context.Context, db *sql.DB, d chuck.Dialect, tableN
 	return snaps, nil
 }
 
-func queryColumns(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName string) ([]LiveColumnSnapshot, error) {
+// LiveSchemaSnapshotObjects queries the database for all listed schema-qualified
+// tables. Use this when any table needs schema-aware introspection.
+func LiveSchemaSnapshotObjects(ctx context.Context, db *sql.DB, d chuck.Dialect, targets ...chuck.ObjectName) ([]LiveTableSnapshot, error) {
+	snaps := make([]LiveTableSnapshot, 0, len(targets))
+	for _, t := range targets {
+		snap, err := LiveSnapshotObject(ctx, db, d, t)
+		if err != nil {
+			return nil, err
+		}
+		snaps = append(snaps, snap)
+	}
+	return snaps, nil
+}
+
+// checkTableExists runs the engine-appropriate existence probe for a (schema,
+// name) pair. SQLite ignores schema.
+func checkTableExists(ctx context.Context, db *sql.DB, d chuck.Dialect, schema, name string) error {
+	var (
+		query string
+		args  []any
+	)
+	switch d.Engine() {
+	case chuck.SQLite:
+		query = "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
+		args = []any{name}
+	case chuck.Postgres:
+		query = "SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2"
+		args = []any{schema, name}
+	case chuck.MSSQL:
+		objArg := name
+		if schema != "" {
+			objArg = schema + "." + name
+		}
+		query = "SELECT name FROM sys.objects WHERE object_id = OBJECT_ID(@p1) AND type = 'U'"
+		args = []any{objArg}
+	default:
+		return fmt.Errorf("unsupported engine: %s", d.Engine())
+	}
+
+	var exists any
+	display := name
+	if schema != "" {
+		display = schema + "." + name
+	}
+	if err := db.QueryRowContext(ctx, query, args...).Scan(&exists); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("table %q does not exist", display)
+		}
+		return fmt.Errorf("check table %q: %w", display, err)
+	}
+	return nil
+}
+
+func queryColumns(ctx context.Context, db *sql.DB, d chuck.Dialect, schema, name string) ([]LiveColumnSnapshot, error) {
 	switch d.Engine() {
 	case chuck.SQLite, chuck.Postgres:
-		return queryColumnsSimple(ctx, db, d, tableName)
+		return queryColumnsSimple(ctx, db, d, schema, name)
 	case chuck.MSSQL:
-		return queryColumnsMSSQL(ctx, db, tableName)
+		return queryColumnsMSSQL(ctx, db, schema, name)
 	default:
 		return nil, fmt.Errorf("unsupported engine: %s", d.Engine())
 	}
@@ -91,18 +153,23 @@ func queryColumns(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName st
 // queryColumnsSimple handles engines whose column queries return the shared
 // 4-column shape (name, type, nullable, default) and need no per-column
 // reconstruction work. Used by SQLite and Postgres.
-func queryColumnsSimple(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName string) ([]LiveColumnSnapshot, error) {
-	var query string
+func queryColumnsSimple(ctx context.Context, db *sql.DB, d chuck.Dialect, schema, name string) ([]LiveColumnSnapshot, error) {
+	var (
+		query string
+		args  []any
+	)
 	switch d.Engine() {
 	case chuck.SQLite:
 		query = `SELECT name, type, CASE WHEN "notnull" = 1 OR pk = 1 THEN 'NO' ELSE 'YES' END AS nullable, COALESCE(dflt_value, '') AS dflt FROM pragma_table_info(?)`
+		args = []any{name}
 	case chuck.Postgres:
 		query = postgresColumnQuery
+		args = []any{schema, name}
 	default:
 		return nil, fmt.Errorf("unsupported engine: %s", d.Engine())
 	}
 
-	rows, err := db.QueryContext(ctx, query, tableName)
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -129,13 +196,13 @@ func queryColumnsSimple(ctx context.Context, db *sql.DB, d chuck.Dialect, tableN
 // bytes) per the SQL Server INFORMATION_SCHEMA.COLUMNS contract, with -1
 // indicating MAX. NUMERIC_PRECISION/NUMERIC_SCALE are populated for numeric
 // types and NULL otherwise. All three are nullable, hence the NullInt64 scans.
-var mssqlColumnQuery = `SELECT COLUMN_NAME, UPPER(DATA_TYPE), IS_NULLABLE, COALESCE(COLUMN_DEFAULT, ''), CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @p1 ORDER BY ORDINAL_POSITION`
+var mssqlColumnQuery = `SELECT COLUMN_NAME, UPPER(DATA_TYPE), IS_NULLABLE, COALESCE(COLUMN_DEFAULT, ''), CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = @p1 AND TABLE_NAME = @p2 ORDER BY ORDINAL_POSITION`
 
 // queryColumnsMSSQL queries MSSQL column metadata and rebuilds parameterized
 // type strings (e.g. NVARCHAR(255), DECIMAL(10,2), VARCHAR(MAX)) so live
 // snapshots match the declared types produced by Snapshot().
-func queryColumnsMSSQL(ctx context.Context, db *sql.DB, tableName string) ([]LiveColumnSnapshot, error) {
-	rows, err := db.QueryContext(ctx, mssqlColumnQuery, tableName)
+func queryColumnsMSSQL(ctx context.Context, db *sql.DB, schema, tableName string) ([]LiveColumnSnapshot, error) {
+	rows, err := db.QueryContext(ctx, mssqlColumnQuery, schema, tableName)
 	if err != nil {
 		return nil, err
 	}
@@ -189,14 +256,14 @@ func reconstructMSSQLType(dataType string, charMaxLength, numericPrecision, nume
 	}
 }
 
-func queryIndexes(ctx context.Context, db *sql.DB, d chuck.Dialect, tableName string) ([]LiveIndexSnapshot, error) {
+func queryIndexes(ctx context.Context, db *sql.DB, d chuck.Dialect, schema, tableName string) ([]LiveIndexSnapshot, error) {
 	switch d.Engine() {
 	case chuck.SQLite:
 		return queryIndexesSQLite(ctx, db, tableName)
 	case chuck.Postgres:
-		return queryIndexesPostgres(ctx, db, tableName)
+		return queryIndexesPostgres(ctx, db, schema, tableName)
 	case chuck.MSSQL:
-		return queryIndexesMSSQL(ctx, db, tableName)
+		return queryIndexesMSSQL(ctx, db, schema, tableName)
 	default:
 		return nil, fmt.Errorf("unsupported engine: %s", d.Engine())
 	}
@@ -283,10 +350,10 @@ func extractSQLiteWhere(createSQL string) string {
 	return strings.TrimSpace(createSQL[idx+7:])
 }
 
-func queryIndexesPostgres(ctx context.Context, db *sql.DB, tableName string) ([]LiveIndexSnapshot, error) {
+func queryIndexesPostgres(ctx context.Context, db *sql.DB, schema, tableName string) ([]LiveIndexSnapshot, error) {
 	query := postgresIndexQuery
 
-	rows, err := db.QueryContext(ctx, query, tableName)
+	rows, err := db.QueryContext(ctx, query, schema, tableName)
 	if err != nil {
 		return nil, err
 	}
@@ -312,11 +379,13 @@ func queryIndexesPostgres(ctx context.Context, db *sql.DB, tableName string) ([]
 	return indexes, rows.Err()
 }
 
-// postgresColumnQuery is the query used to retrieve column metadata from Postgres.
+// postgresColumnQuery retrieves column metadata for a (schema, table) pair.
+// The schema and table name are passed as parameters $1 and $2 respectively
+// so the same query works for any namespace, not just public.
 // Exported at package level for testability.
-var postgresColumnQuery = `SELECT c.column_name, UPPER(format_type(a.atttypid, a.atttypmod)), c.is_nullable, COALESCE(c.column_default, '') FROM information_schema.columns c JOIN pg_attribute a ON a.attname = c.column_name JOIN pg_class t ON t.relname = c.table_name AND t.oid = a.attrelid JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public' WHERE c.table_schema = 'public' AND c.table_name = $1 AND a.attnum > 0 AND NOT a.attisdropped ORDER BY c.ordinal_position`
+var postgresColumnQuery = `SELECT c.column_name, UPPER(format_type(a.atttypid, a.atttypmod)), c.is_nullable, COALESCE(c.column_default, '') FROM information_schema.columns c JOIN pg_attribute a ON a.attname = c.column_name JOIN pg_class t ON t.relname = c.table_name AND t.oid = a.attrelid JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = c.table_schema WHERE c.table_schema = $1 AND c.table_name = $2 AND a.attnum > 0 AND NOT a.attisdropped ORDER BY c.ordinal_position`
 
-// postgresIndexQuery is the query used to retrieve index metadata from Postgres.
+// postgresIndexQuery retrieves index metadata for a (schema, table) pair.
 // Exported at package level for testability.
 var postgresIndexQuery = `
 		SELECT
@@ -331,11 +400,12 @@ var postgresIndexQuery = `
 		FROM pg_index ix
 		JOIN pg_class t ON t.oid = ix.indrelid
 		JOIN pg_class i ON i.oid = ix.indexrelid
-		JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
-		WHERE t.relname = $1 AND NOT ix.indisprimary`
+		JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = $1
+		WHERE t.relname = $2 AND NOT ix.indisprimary`
 
-// mssqlIndexQuery is the query used to retrieve index metadata from MSSQL.
-// Exported at package level for testability.
+// mssqlIndexQuery retrieves index metadata for a schema-qualified object via
+// OBJECT_ID, which accepts the literal "[schema].[name]" pattern. Exported at
+// package level for testability.
 var mssqlIndexQuery = `
 	SELECT
 		si.name,
@@ -355,8 +425,12 @@ var mssqlIndexQuery = `
 	AND si.is_primary_key = 0
 	AND si.name IS NOT NULL`
 
-func queryIndexesMSSQL(ctx context.Context, db *sql.DB, tableName string) ([]LiveIndexSnapshot, error) {
-	rows, err := db.QueryContext(ctx, mssqlIndexQuery, tableName)
+func queryIndexesMSSQL(ctx context.Context, db *sql.DB, schema, tableName string) ([]LiveIndexSnapshot, error) {
+	objArg := tableName
+	if schema != "" {
+		objArg = schema + "." + tableName
+	}
+	rows, err := db.QueryContext(ctx, mssqlIndexQuery, objArg)
 	if err != nil {
 		return nil, err
 	}
@@ -398,7 +472,11 @@ func splitAndTrim(s, sep string) []string {
 // in the same format as SnapshotString for easy side-by-side comparison.
 func (s LiveTableSnapshot) String() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "TABLE %s\n", s.Name)
+	if s.Schema != "" {
+		fmt.Fprintf(&b, "TABLE %s.%s\n", s.Schema, s.Name)
+	} else {
+		fmt.Fprintf(&b, "TABLE %s\n", s.Name)
+	}
 
 	for _, c := range s.Columns {
 		var parts []string

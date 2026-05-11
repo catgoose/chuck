@@ -3,6 +3,7 @@ package schema
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -140,6 +141,10 @@ func Ensure(ctx context.Context, db *sql.DB, d chuck.Dialect, tables []*TableDef
 		opt(cfg)
 	}
 
+	if err := CheckSchemaCompatibility(d, tables); err != nil {
+		return nil, err
+	}
+
 	result := &EnsureResult{}
 
 	switch cfg.mode {
@@ -152,6 +157,38 @@ func Ensure(ctx context.Context, db *sql.DB, d chuck.Dialect, tables []*TableDef
 	default:
 		return nil, fmt.Errorf("unknown ensure mode: %d", int(cfg.mode))
 	}
+}
+
+// ErrSQLiteSchemaCollision is returned when two declared schema-qualified
+// tables collapse to the same bare SQLite table name. SQLite has no schema
+// namespace, so chuck refuses to emit ambiguous DDL rather than silently
+// merging the declarations.
+var ErrSQLiteSchemaCollision = errors.New("sqlite: schema-qualified tables collapse to duplicate bare names")
+
+// CheckSchemaCompatibility validates that the given declared tables can be
+// represented on the target dialect. The only current check is SQLite's
+// collision guard: when multiple schema-qualified declarations would resolve
+// to the same bare table name on SQLite, return ErrSQLiteSchemaCollision so
+// the caller fails fast instead of producing duplicate DDL.
+func CheckSchemaCompatibility(d chuck.Dialect, tables []*TableDef) error {
+	if d.Engine() != chuck.SQLite {
+		return nil
+	}
+	seen := make(map[string][]string, len(tables))
+	for _, t := range tables {
+		bare := d.NormalizeIdentifier(t.Name)
+		seen[bare] = append(seen[bare], t.Object().String())
+	}
+	var clashes []string
+	for bare, sources := range seen {
+		if len(sources) > 1 {
+			clashes = append(clashes, fmt.Sprintf("%s <- [%s]", bare, strings.Join(sources, ", ")))
+		}
+	}
+	if len(clashes) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrSQLiteSchemaCollision, strings.Join(clashes, "; "))
 }
 
 func ensureStrict(ctx context.Context, db *sql.DB, d chuck.Dialect, tables []*TableDef, cfg *ensureConfig, result *EnsureResult) (*EnsureResult, error) {
@@ -182,7 +219,7 @@ func ensureDev(ctx context.Context, db *sql.DB, d chuck.Dialect, tables []*Table
 
 	var drifted []*SchemaDiff
 	for _, td := range ordered {
-		tableName := d.NormalizeIdentifier(td.Name)
+		displayName := displayQualifiedName(d, td.Object())
 
 		// Check if table exists by attempting a diff
 		diff, err := DiffSchema(ctx, db, d, td)
@@ -194,19 +231,19 @@ func ensureDev(ctx context.Context, db *sql.DB, d chuck.Dialect, tables []*Table
 			// Create the table
 			for _, stmt := range td.CreateIfNotExistsSQL(d) {
 				if _, err := db.ExecContext(ctx, stmt); err != nil {
-					return nil, fmt.Errorf("create table %q: %w", tableName, err)
+					return nil, fmt.Errorf("create table %q: %w", displayName, err)
 				}
 			}
-			result.TablesCreated = append(result.TablesCreated, tableName)
+			result.TablesCreated = append(result.TablesCreated, displayName)
 
 			// Seed the table
 			if td.HasSeedData() {
 				for _, stmt := range td.SeedSQL(d) {
 					if _, err := db.ExecContext(ctx, stmt); err != nil {
-						return nil, fmt.Errorf("seed table %q: %w", tableName, err)
+						return nil, fmt.Errorf("seed table %q: %w", displayName, err)
 					}
 				}
-				result.TablesSeeded = append(result.TablesSeeded, tableName)
+				result.TablesSeeded = append(result.TablesSeeded, displayName)
 			}
 			continue
 		}

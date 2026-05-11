@@ -13,7 +13,12 @@ import (
 
 // SchemaDiff is a structured diff between a declared schema and a live database.
 // It is JSON-serializable and designed for consumption by developers, agents, and CI tools.
+//
+// Table is the display-form qualified name ("schema.name" when schema is set,
+// otherwise just "name"). Schema is the dialect-normalized schema component
+// when the table is schema-qualified.
 type SchemaDiff struct {
+	Schema         string           `json:"schema,omitempty"`
 	Table          string           `json:"table"`
 	TableMissing   bool             `json:"table_missing,omitempty"`
 	AddedColumns   []ColumnSnapshot `json:"added_columns,omitempty"`
@@ -60,10 +65,14 @@ type ColumnDiff struct {
 // It does not currently detect drift in column-level unique constraints,
 // primary keys, foreign keys, or CHECK constraints.
 func DiffSchema(ctx context.Context, db *sql.DB, d chuck.Dialect, td *TableDef) (*SchemaDiff, error) {
-	tableName := d.NormalizeIdentifier(td.Name)
-	diff := &SchemaDiff{Table: tableName}
+	schema, name := normalizedObject(d, td.Object())
+	displayName := name
+	if schema != "" {
+		displayName = schema + "." + name
+	}
+	diff := &SchemaDiff{Schema: schema, Table: displayName}
 
-	live, err := LiveSnapshot(ctx, db, d, tableName)
+	live, err := LiveSnapshotObject(ctx, db, d, td.Object())
 	if err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
 			diff.TableMissing = true

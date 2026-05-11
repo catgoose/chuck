@@ -29,8 +29,15 @@ func (uc UniqueConstraint) ddl(d chuck.Dialect) string {
 type SeedRow map[string]string
 
 // TableDef defines a table schema.
+//
+// Schema-qualified tables: an optional schema namespace can be set with
+// WithSchema. The schema is preserved as structured metadata (not parsed from
+// a dotted string) through DDL generation, foreign-key metadata, snapshots,
+// validation, diffing, ensure, and live introspection. SQLite ignores the
+// schema component because SQLite has no equivalent namespace.
 type TableDef struct {
 	Name              string
+	schema            string
 	cols              []ColumnDef
 	indexes           []IndexDef
 	uniqueConstraints []UniqueConstraint
@@ -47,9 +54,43 @@ func NewTable(name string) *TableDef {
 	return &TableDef{Name: name}
 }
 
-// TableNameFor returns the table name normalized for the given dialect.
+// NewQualifiedTable creates a new table definition with an explicit schema.
+// Equivalent to NewTable(name).WithSchema(schema).
+func NewQualifiedTable(schema, name string) *TableDef {
+	return &TableDef{Name: name, schema: schema}
+}
+
+// WithSchema sets the schema namespace for the table. SQLite ignores this
+// because it has no schema namespace; other dialects render qualified
+// identifiers like "schema"."table" or [schema].[table].
+func (t *TableDef) WithSchema(schema string) *TableDef {
+	t.schema = schema
+	return t
+}
+
+// Schema returns the declared schema namespace for the table, or "" if none.
+func (t *TableDef) Schema() string {
+	return t.schema
+}
+
+// Object returns the structured ObjectName for the table, combining schema
+// and name.
+func (t *TableDef) Object() chuck.ObjectName {
+	return chuck.ObjectName{Schema: t.schema, Name: t.Name}
+}
+
+// TableNameFor returns the bare table name normalized for the given dialect.
+// Callers that need a qualified, quoted identifier should use QualifiedNameFor
+// instead.
 func (t *TableDef) TableNameFor(d chuck.Dialect) string {
 	return d.NormalizeIdentifier(t.Name)
+}
+
+// QualifiedNameFor returns the dialect-rendered, quoted, schema-qualified
+// table identifier (e.g. [sg].[SalesAgents] on MSSQL, "sg"."sales_agents" on
+// Postgres). On SQLite the schema component is dropped.
+func (t *TableDef) QualifiedNameFor(d chuck.Dialect) string {
+	return qualifyTable(d, t.Object())
 }
 
 // Columns appends column definitions.
@@ -186,8 +227,7 @@ func (t *TableDef) SeedSQL(d chuck.Dialect) []string {
 		if len(cols) == 0 {
 			continue
 		}
-		stmts = append(stmts, d.InsertOrIgnore(
-			d.NormalizeIdentifier(t.Name),
+		stmts = append(stmts, insertOrIgnoreSQL(d, t.Object(),
 			strings.Join(cols, ", "),
 			strings.Join(vals, ", "),
 		))
@@ -293,30 +333,25 @@ func (t *TableDef) columnBody(d chuck.Dialect) string {
 
 // CreateSQL returns the CREATE TABLE statement followed by CREATE INDEX statements.
 func (t *TableDef) CreateSQL(d chuck.Dialect) []string {
-	tableName := d.NormalizeIdentifier(t.Name)
-	create := fmt.Sprintf("\n\t\tCREATE TABLE %s (\n%s\n\t\t)",
-		d.QuoteIdentifier(tableName), t.columnBody(d))
-
-	stmts := []string{create}
+	obj := t.Object()
+	stmts := []string{createTableSQL(d, obj, t.columnBody(d))}
 	for _, idx := range t.indexes {
-		stmts = append(stmts, idx.ddl(d, tableName))
+		stmts = append(stmts, idx.ddl(d, obj))
 	}
 	return stmts
 }
 
 // CreateIfNotExistsSQL returns CREATE TABLE IF NOT EXISTS followed by CREATE INDEX IF NOT EXISTS statements.
 func (t *TableDef) CreateIfNotExistsSQL(d chuck.Dialect) []string {
-	tableName := d.NormalizeIdentifier(t.Name)
-	create := d.CreateTableIfNotExists(tableName, t.columnBody(d))
-
-	stmts := []string{create}
+	obj := t.Object()
+	stmts := []string{createTableIfNotExistsSQL(d, obj, t.columnBody(d))}
 	for _, idx := range t.indexes {
-		stmts = append(stmts, idx.ddlIfNotExists(d, tableName))
+		stmts = append(stmts, idx.ddlIfNotExists(d, obj))
 	}
 	return stmts
 }
 
 // DropSQL returns the DROP TABLE statement for the given dialect.
 func (t *TableDef) DropSQL(d chuck.Dialect) string {
-	return d.DropTableIfExists(d.NormalizeIdentifier(t.Name))
+	return dropTableIfExistsSQL(d, t.Object())
 }

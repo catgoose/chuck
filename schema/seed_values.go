@@ -97,8 +97,7 @@ func (t *TableDef) seedValuesSQL(d chuck.Dialect) []string {
 		if len(cols) == 0 {
 			continue
 		}
-		stmts = append(stmts, d.InsertOrIgnore(
-			d.NormalizeIdentifier(t.Name),
+		stmts = append(stmts, insertOrIgnoreSQL(d, t.Object(),
 			strings.Join(cols, ", "),
 			strings.Join(vals, ", "),
 		))

@@ -86,7 +86,7 @@ type ColumnDef struct {
 	mutable    bool
 	defaultVal string
 	defaultFn  func(chuck.Dialect) string
-	refTable   string
+	refObject  chuck.ObjectName
 	refColumn  string
 	onDelete   string
 	onUpdate   string
@@ -153,11 +153,34 @@ func (c ColumnDef) Immutable() ColumnDef { c.mutable = false; return c }
 // Mutable marks the column as mutable (included in UPDATE column lists).
 func (c ColumnDef) Mutable() ColumnDef { c.mutable = true; return c }
 
-// References adds a foreign key reference to another table's column.
+// References adds a foreign key reference to another table's column. The
+// referenced table is treated as unqualified; for schema-qualified targets
+// use ReferencesObject.
 func (c ColumnDef) References(table, column string) ColumnDef {
-	c.refTable = table
+	c.refObject = chuck.ObjectName{Name: table}
 	c.refColumn = column
 	return c
+}
+
+// ReferencesObject adds a foreign key reference to a schema-qualified target.
+func (c ColumnDef) ReferencesObject(target chuck.ObjectName, column string) ColumnDef {
+	c.refObject = target
+	c.refColumn = column
+	return c
+}
+
+// ReferencesQualified is a convenience for ReferencesObject taking schema and
+// table as separate strings.
+func (c ColumnDef) ReferencesQualified(schema, table, column string) ColumnDef {
+	c.refObject = chuck.ObjectName{Schema: schema, Name: table}
+	c.refColumn = column
+	return c
+}
+
+// RefTarget returns the structured foreign-key target, or a zero ObjectName
+// when the column has no reference set.
+func (c ColumnDef) RefTarget() chuck.ObjectName {
+	return c.refObject
 }
 
 // OnDelete sets the referential action for DELETE (e.g. "CASCADE", "SET NULL").
@@ -199,10 +222,8 @@ func (c ColumnDef) ddl(d chuck.Dialect) string {
 		parts = append(parts, fmt.Sprintf("DEFAULT %s", c.defaultVal))
 	}
 
-	if c.refTable != "" && c.refColumn != "" {
-		ref := fmt.Sprintf("REFERENCES %s(%s)",
-			d.QuoteIdentifier(d.NormalizeIdentifier(c.refTable)),
-			d.QuoteIdentifier(d.NormalizeIdentifier(c.refColumn)))
+	if c.refObject.Name != "" && c.refColumn != "" {
+		ref := "REFERENCES " + renderFKReference(d, c.refObject, c.refColumn)
 		if c.onDelete != "" {
 			ref += " ON DELETE " + c.onDelete
 		}

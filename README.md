@@ -18,6 +18,7 @@
     - [Column Lists](#column-lists)
     - [Seed Data](#seed-data)
     - [Table Dependency Ordering](#table-dependency-ordering)
+    - [Owned Views](#owned-views)
     - [Schema Snapshots](#schema-snapshots)
     - [Live Schema Snapshots](#live-schema-snapshots)
     - [Schema Validation](#schema-validation)
@@ -421,6 +422,34 @@ for _, t := range dropOrder {
 ```
 
 For dry-run logging, call `InboundForeignKeys` and feed each entry to `DropForeignKeySQL` to inspect the generated statements without executing them.
+
+### Owned Views
+
+Views live next to owned tables as first-class `ViewDef` values, so schema ownership stays in one package instead of splitting `TableDef` declarations from handwritten `CREATE VIEW` constants. A view carries an optional schema namespace and a SELECT body; the package emits dialect-aware lifecycle SQL through the same identifier-rendering path as `TableDef`.
+
+```go
+var ActiveTasksView = schema.NewView("v_active_tasks",
+    `SELECT "id", "title" FROM "tasks" WHERE "deleted_at" IS NULL`)
+
+// Or schema-qualified, mirroring NewQualifiedTable.
+var PTOUsageView = schema.NewQualifiedView("sg", "v_pto_usage",
+    `SELECT [AgentID], SUM([Hours]) AS [TotalHours] FROM [sg].[PTOEntries] GROUP BY [AgentID]`)
+
+// Create / replace / drop -- rendered per dialect.
+db.Exec(ActiveTasksView.CreateSQL(dialect))
+for _, stmt := range ActiveTasksView.CreateOrReplaceSQL(dialect) {
+    db.Exec(stmt)
+}
+db.Exec(ActiveTasksView.DropSQL(dialect))
+```
+
+Lifecycle SQL is rendered per dialect:
+
+- **Postgres** uses native `CREATE OR REPLACE VIEW ... AS ...` and `DROP VIEW IF EXISTS ...`.
+- **MSSQL** uses `CREATE OR ALTER VIEW ... AS ...` (MSSQL 2016+) and wraps the drop in a `sys.views` existence probe, matching the table-drop pattern.
+- **SQLite** has no `CREATE OR REPLACE` / `CREATE OR ALTER` for views, so `CreateOrReplaceSQL` returns a `DROP VIEW IF EXISTS` followed by `CREATE VIEW` -- run them in order. The schema component is dropped on SQLite because it has no namespace.
+
+The view body is taken verbatim; callers own its inner quoting and any references to owned tables. Ordering between owned views and the tables they read is caller-owned: create views after their tables, drop them before. This keeps the API thin and avoids forcing a generalized scheduler for what is usually a short linear chain on top of owned tables.
 
 ### Schema Snapshots
 

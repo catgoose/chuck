@@ -65,6 +65,52 @@ func schemaDriftTest(t *testing.T, db *sql.DB, d chuck.Dialect) {
 	})
 }
 
+// TestViewLifecycleSQLite exercises the ViewDef create / create-or-replace /
+// drop lifecycle end-to-end against in-memory SQLite. Running this against a
+// real engine catches surface-level breakage (escaping, missing whitespace,
+// dialect-emitted statements that the engine refuses) that pure string tests
+// would miss. SQLite is used because it needs no env-gated DSN.
+func TestViewLifecycleSQLite(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx := context.Background()
+	d := chuck.SQLiteDialect{}
+
+	tbl := schema.NewTable("view_lifecycle_tasks").Columns(
+		schema.AutoIncrCol("ID"),
+		schema.Col("Title", schema.TypeVarchar(255)).NotNull(),
+	)
+	for _, stmt := range tbl.CreateIfNotExistsSQL(d) {
+		_, err := db.ExecContext(ctx, stmt)
+		require.NoError(t, err, "create base table: %s", stmt)
+	}
+	defer func() {
+		_, _ = db.ExecContext(ctx, d.DropTableIfExists(tbl.TableNameFor(d)))
+	}()
+
+	view := schema.NewView("v_view_lifecycle_active",
+		`SELECT "id", "title" FROM "view_lifecycle_tasks"`)
+
+	// Plain create succeeds against an empty schema.
+	_, err = db.ExecContext(ctx, view.CreateSQL(d))
+	require.NoError(t, err, "create view: %s", view.CreateSQL(d))
+
+	// CreateOrReplaceSQL on SQLite emits DROP-then-CREATE; both must execute
+	// cleanly so a re-bootstrap can refresh the view body.
+	for _, stmt := range view.CreateOrReplaceSQL(d) {
+		_, err := db.ExecContext(ctx, stmt)
+		require.NoError(t, err, "create-or-replace view: %s", stmt)
+	}
+
+	// Drop succeeds once, and runs cleanly a second time thanks to IF EXISTS.
+	for i := range 2 {
+		_, err := db.ExecContext(ctx, view.DropSQL(d))
+		require.NoError(t, err, "drop view iteration %d: %s", i, view.DropSQL(d))
+	}
+}
+
 func TestSchemaDriftSQLite(t *testing.T) {
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err)

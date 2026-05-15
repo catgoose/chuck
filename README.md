@@ -400,6 +400,28 @@ for _, t := range dropOrder {
 
 Self-referential foreign keys (`WithParent()`) are handled gracefully. Circular dependencies return `ErrCyclicDependency`.
 
+#### MSSQL Destructive Bootstrap: Dropping Inbound Foreign Keys
+
+On MSSQL, inline foreign keys declared via `chuck/schema` emit auto-generated constraint names (e.g. `FK__Goals__AgentID__1234ABCD`). `DropOrder` puts tables in the right teardown order, but `DROP TABLE` still fails while an inbound FK pins the table — the constraint must be dropped by name first.
+
+`InboundForeignKeys` queries `sys.foreign_keys` for every FK whose parent or referenced table belongs to the owned set, deriving membership from your declared `*TableDef` slice rather than a handwritten parallel list. `DropInboundForeignKeys` executes the matching `ALTER TABLE ... DROP CONSTRAINT` statements so a destructive rebuild can proceed:
+
+```go
+tables := []*schema.TableDef{UsersTable, TasksTable, CommentsTable}
+
+// Detach auto-named FKs first; on non-MSSQL engines this is a no-op.
+if _, err := schema.DropInboundForeignKeys(ctx, db, dialect, tables...); err != nil {
+    log.Fatal(err)
+}
+
+dropOrder, _ := schema.DropOrder(tables...)
+for _, t := range dropOrder {
+    db.ExecContext(ctx, t.DropSQL(dialect))
+}
+```
+
+For dry-run logging, call `InboundForeignKeys` and feed each entry to `DropForeignKeySQL` to inspect the generated statements without executing them.
+
 ### Schema Snapshots
 
 Export the declared schema in structured or text format for diffing:

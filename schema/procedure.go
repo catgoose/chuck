@@ -20,10 +20,14 @@ var ErrProcedureDialectUnsupported = errors.New("schema: stored procedure owners
 // ObjectName path so qualified procedures emit [schema].[name] consistently
 // with the rest of the package.
 //
-// The body is taken verbatim. Callers own all inner identifier quoting,
-// parameter declarations, and any RETURN / SET / control-flow inside the
-// procedure body. The package wraps that body with the dialect-correct
-// CREATE OR ALTER PROCEDURE preamble and emits a safe DROP path.
+// The definition payload is the full T-SQL text that follows the qualified
+// procedure name. T-SQL grammar places parameter declarations and procedure
+// options (e.g. WITH RECOMPILE, WITH ENCRYPTION) between the procedure name
+// and the AS keyword, so the package cannot inject AS for the caller without
+// closing off those slots. Callers therefore own everything from optional
+// parameters through AS through the body itself, and the package wraps that
+// text with the dialect-correct CREATE OR ALTER PROCEDURE preamble plus the
+// qualified identifier.
 //
 // Non-MSSQL dialects are explicitly unsupported in this first pass; the
 // lifecycle methods return ErrProcedureDialectUnsupported rather than
@@ -35,23 +39,29 @@ var ErrProcedureDialectUnsupported = errors.New("schema: stored procedure owners
 // entrypoints layered on top of the table graph; forcing them into a
 // generalized scheduler would add weight without buying clarity.
 type ProcedureDef struct {
-	Name   string
-	schema string
-	body   string
+	Name       string
+	schema     string
+	definition string
 }
 
 // NewProcedure creates an unqualified owned procedure with the given name and
-// raw body. The body is the text that follows `CREATE OR ALTER PROCEDURE
-// <name> AS` — typically parameter declarations followed by `BEGIN ... END`,
-// without a trailing semicolon.
-func NewProcedure(name, body string) *ProcedureDef {
-	return &ProcedureDef{Name: name, body: body}
+// raw definition. The definition is the full T-SQL text that follows the
+// qualified procedure name: optional parameter declarations, optional WITH
+// options, the required AS keyword, and the procedure body. Example shape:
+//
+//	"@AgentID INT, @AsOf DATETIME2 = NULL\nWITH RECOMPILE\nAS\nBEGIN ... END"
+//
+// Callers own all inner identifier quoting and the AS keyword itself; the
+// package contributes only the CREATE OR ALTER PROCEDURE preamble and the
+// qualified identifier.
+func NewProcedure(name, definition string) *ProcedureDef {
+	return &ProcedureDef{Name: name, definition: definition}
 }
 
 // NewQualifiedProcedure creates an owned procedure with an explicit schema
-// namespace. Equivalent to NewProcedure(name, body).WithSchema(schema).
-func NewQualifiedProcedure(schema, name, body string) *ProcedureDef {
-	return &ProcedureDef{Name: name, schema: schema, body: body}
+// namespace. Equivalent to NewProcedure(name, definition).WithSchema(schema).
+func NewQualifiedProcedure(schema, name, definition string) *ProcedureDef {
+	return &ProcedureDef{Name: name, schema: schema, definition: definition}
 }
 
 // WithSchema sets the schema namespace for the procedure. Procedure ownership
@@ -68,9 +78,11 @@ func (p *ProcedureDef) Schema() string {
 	return p.schema
 }
 
-// Body returns the raw body declared for the procedure.
-func (p *ProcedureDef) Body() string {
-	return p.body
+// Definition returns the raw T-SQL definition declared for the procedure —
+// everything from optional parameter declarations through AS through the
+// procedure body.
+func (p *ProcedureDef) Definition() string {
+	return p.definition
 }
 
 // Object returns the structured ObjectName for the procedure.
@@ -91,16 +103,21 @@ func (p *ProcedureDef) QualifiedNameFor(d chuck.Dialect) string {
 
 // CreateOrAlterSQL returns the dialect-idiomatic statement that creates the
 // procedure, replacing any prior definition with the same identity. On MSSQL
-// this is a single `CREATE OR ALTER PROCEDURE <qualified-name> AS <body>`
+// this is a single `CREATE OR ALTER PROCEDURE <qualified-name> <definition>`
 // statement; MSSQL requires this to be the only statement in its batch, which
 // matches how the rest of chuck emits MSSQL DDL (one statement per Exec).
+//
+// The package contributes the CREATE OR ALTER PROCEDURE preamble and the
+// qualified identifier. The caller's definition supplies any parameter
+// declarations, procedure options, the required AS keyword, and the body, in
+// the order T-SQL demands.
 //
 // Returns ErrProcedureDialectUnsupported on non-MSSQL dialects.
 func (p *ProcedureDef) CreateOrAlterSQL(d chuck.Dialect) (string, error) {
 	if d.Engine() != chuck.MSSQL {
 		return "", fmt.Errorf("%w: %s", ErrProcedureDialectUnsupported, d.Engine())
 	}
-	return fmt.Sprintf("CREATE OR ALTER PROCEDURE %s AS %s", p.QualifiedNameFor(d), p.body), nil
+	return fmt.Sprintf("CREATE OR ALTER PROCEDURE %s %s", p.QualifiedNameFor(d), p.definition), nil
 }
 
 // DropSQL returns a single safe `DROP PROCEDURE` statement that probes

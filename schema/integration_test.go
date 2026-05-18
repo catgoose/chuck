@@ -114,9 +114,10 @@ func TestViewLifecycleSQLite(t *testing.T) {
 // TestProcedureLifecycleMSSQL exercises the ProcedureDef create-or-alter /
 // drop lifecycle end-to-end against a live MSSQL instance. Procedure
 // ownership is MSSQL-only in this release, so SQLite/Postgres cannot cover
-// the apply path. The body is intentionally trivial — a SELECT 1 wrapper —
-// so the test asserts the lifecycle SQL is accepted, not any user-domain
-// behavior.
+// the apply path. The definition is parameterized on purpose: it proves the
+// pre-`AS` parameter slot survives the render path (the PR #81 blocking
+// review finding), in addition to the basic CREATE OR ALTER / DROP probe
+// idempotency contract.
 func TestProcedureLifecycleMSSQL(t *testing.T) {
 	dsn := os.Getenv("CHUCK_MSSQL_URL")
 	if dsn == "" {
@@ -129,7 +130,7 @@ func TestProcedureLifecycleMSSQL(t *testing.T) {
 	defer db.Close()
 
 	proc := schema.NewProcedure("usp_chuck_proc_lifecycle",
-		"BEGIN SET NOCOUNT ON; SELECT 1 AS Probe; END")
+		"@Probe INT = 1 AS BEGIN SET NOCOUNT ON; SELECT @Probe AS Probe; END")
 
 	// Best-effort cleanup from any prior failed run.
 	if stmt, derr := proc.DropSQL(d); derr == nil {

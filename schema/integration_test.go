@@ -111,6 +111,56 @@ func TestViewLifecycleSQLite(t *testing.T) {
 	}
 }
 
+// TestProcedureLifecycleMSSQL exercises the ProcedureDef create-or-alter /
+// drop lifecycle end-to-end against a live MSSQL instance. Procedure
+// ownership is MSSQL-only in this release, so SQLite/Postgres cannot cover
+// the apply path. The body is intentionally trivial — a SELECT 1 wrapper —
+// so the test asserts the lifecycle SQL is accepted, not any user-domain
+// behavior.
+func TestProcedureLifecycleMSSQL(t *testing.T) {
+	dsn := os.Getenv("CHUCK_MSSQL_URL")
+	if dsn == "" {
+		t.Skip("CHUCK_MSSQL_URL not set")
+	}
+
+	ctx := context.Background()
+	db, d, err := chuck.OpenURL(ctx, dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	proc := schema.NewProcedure("usp_chuck_proc_lifecycle",
+		"BEGIN SET NOCOUNT ON; SELECT 1 AS Probe; END")
+
+	// Best-effort cleanup from any prior failed run.
+	if stmt, derr := proc.DropSQL(d); derr == nil {
+		_, _ = db.ExecContext(ctx, stmt)
+	}
+
+	defer func() {
+		if stmt, derr := proc.DropSQL(d); derr == nil {
+			_, _ = db.ExecContext(ctx, stmt)
+		}
+	}()
+
+	// CreateOrAlterSQL must succeed on a fresh schema and again on the
+	// already-created proc; that is the contract MSSQL CREATE OR ALTER buys
+	// us versus a plain CREATE PROCEDURE.
+	for i := range 2 {
+		stmt, err := proc.CreateOrAlterSQL(d)
+		require.NoError(t, err)
+		_, err = db.ExecContext(ctx, stmt)
+		require.NoError(t, err, "create-or-alter procedure iteration %d: %s", i, stmt)
+	}
+
+	// Existence probe drop is idempotent — second run must be a clean no-op.
+	for i := range 2 {
+		stmt, err := proc.DropSQL(d)
+		require.NoError(t, err)
+		_, err = db.ExecContext(ctx, stmt)
+		require.NoError(t, err, "drop procedure iteration %d: %s", i, stmt)
+	}
+}
+
 func TestSchemaDriftSQLite(t *testing.T) {
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err)

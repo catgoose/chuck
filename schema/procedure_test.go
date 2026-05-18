@@ -60,9 +60,9 @@ func TestProcedureDef_QualifiedNameFor_MSSQL(t *testing.T) {
 }
 
 func TestProcedureDef_CreateOrAlterSQL_MSSQL_Parameterized(t *testing.T) {
-	// The blocking review finding on PR #81: parameters in T-SQL belong
-	// between the procedure name and AS, not after AS. The render path must
-	// place the caller's definition immediately after the qualified name so
+	// Parameters in T-SQL belong between the procedure name and AS, not
+	// after AS. The render path must place the caller's definition
+	// immediately after the qualified name so
 	// `@AgentID INT, @AsOf DATETIME2 = NULL\nAS\n...` lands in the right slot.
 	d := chuck.MSSQLDialect{}
 	p := NewQualifiedProcedure("sg", "usp_RefreshDashboard", procedureDefinition)

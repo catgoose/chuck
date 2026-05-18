@@ -470,7 +470,7 @@ BEGIN
     INSERT INTO [sg].[Dashboard] ([AgentID], [Total])
         SELECT [AgentID], SUM([Hours])
         FROM [sg].[PTOEntries]
-        WHERE [AgentID] = @AgentID AND ([AsOf] IS NULL OR [RecordedAt] <= @AsOf)
+        WHERE [AgentID] = @AgentID AND (@AsOf IS NULL OR [RecordedAt] <= @AsOf)
         GROUP BY [AgentID];
 END`)
 

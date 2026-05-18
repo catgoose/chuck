@@ -115,9 +115,8 @@ func TestViewLifecycleSQLite(t *testing.T) {
 // drop lifecycle end-to-end against a live MSSQL instance. Procedure
 // ownership is MSSQL-only in this release, so SQLite/Postgres cannot cover
 // the apply path. The definition is parameterized on purpose: it proves the
-// pre-`AS` parameter slot survives the render path (the PR #81 blocking
-// review finding), in addition to the basic CREATE OR ALTER / DROP probe
-// idempotency contract.
+// pre-`AS` parameter slot survives the render path, in addition to the basic
+// CREATE OR ALTER / DROP probe idempotency contract.
 func TestProcedureLifecycleMSSQL(t *testing.T) {
 	dsn := os.Getenv("CHUCK_MSSQL_URL")
 	if dsn == "" {

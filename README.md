@@ -19,6 +19,7 @@
     - [Seed Data](#seed-data)
     - [Table Dependency Ordering](#table-dependency-ordering)
     - [Owned Views](#owned-views)
+    - [Owned Procedures (MSSQL)](#owned-procedures-mssql)
     - [Schema Snapshots](#schema-snapshots)
     - [Live Schema Snapshots](#live-schema-snapshots)
     - [Schema Validation](#schema-validation)
@@ -450,6 +451,53 @@ Lifecycle SQL is rendered per dialect:
 - **SQLite** has no `CREATE OR REPLACE` / `CREATE OR ALTER` for views, so `CreateOrReplaceSQL` returns a `DROP VIEW IF EXISTS` followed by `CREATE VIEW` -- run them in order. The schema component is dropped on SQLite because it has no namespace.
 
 The view body is taken verbatim; callers own its inner quoting and any references to owned tables. Ordering between owned views and the tables they read is caller-owned: create views after their tables, drop them before. This keeps the API thin and avoids forcing a generalized scheduler for what is usually a short linear chain on top of owned tables.
+
+### Owned Procedures (MSSQL)
+
+Stored procedures live next to owned tables and views as first-class `ProcedureDef` values, so MSSQL refresh / migration entrypoints stop being raw checked-in `.sql` files outside chuck ownership. Identity mirrors `ViewDef`: an optional schema namespace plus a name, rendered through the same `ObjectName` path so qualified procedures emit `[schema].[name]` consistently with `TableDef` and `ViewDef`.
+
+The definition payload is the full T-SQL text that follows the qualified procedure name: optional parameter declarations, optional `WITH ...` options, the required `AS` keyword, and the body. T-SQL grammar places parameters and options between the name and `AS`, so chuck cannot inject `AS` on the caller's behalf without closing off those slots — the caller owns everything from parameters through `AS` through the body.
+
+```go
+var RefreshDashboardProc = schema.NewQualifiedProcedure("sg",
+    "usp_RefreshDashboard",
+    `@AgentID INT, @AsOf DATETIME2 = NULL
+WITH RECOMPILE
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DELETE FROM [sg].[Dashboard] WHERE [AgentID] = @AgentID;
+    INSERT INTO [sg].[Dashboard] ([AgentID], [Total])
+        SELECT [AgentID], SUM([Hours])
+        FROM [sg].[PTOEntries]
+        WHERE [AgentID] = @AgentID AND (@AsOf IS NULL OR [RecordedAt] <= @AsOf)
+        GROUP BY [AgentID];
+END`)
+
+// Apply (idempotent on MSSQL 2016+):
+stmt, err := RefreshDashboardProc.CreateOrAlterSQL(dialect)
+if err != nil { return err }
+if _, err := db.ExecContext(ctx, stmt); err != nil { return err }
+
+// Tear down:
+stmt, err = RefreshDashboardProc.DropSQL(dialect)
+if err != nil { return err }
+if _, err := db.ExecContext(ctx, stmt); err != nil { return err }
+```
+
+For a zero-parameter procedure the definition simply begins with `AS`:
+
+```go
+schema.NewQualifiedProcedure("sg", "usp_Ping",
+    "AS BEGIN SET NOCOUNT ON; SELECT 1 AS Probe; END")
+```
+
+Lifecycle rules:
+
+- **MSSQL** uses `CREATE OR ALTER PROCEDURE [schema].[name] <definition>` (MSSQL 2016+) for the apply path and wraps the drop in a `sys.procedures` existence probe so callers can run it unconditionally during teardown.
+- **Postgres / SQLite** are explicitly unsupported in this first pass — the lifecycle methods return `schema.ErrProcedureDialectUnsupported` instead of silently no-op'ing. Use `errors.Is(err, schema.ErrProcedureDialectUnsupported)` to branch your bootstrap when the same code path runs against a non-MSSQL engine.
+
+The definition is taken verbatim. Callers own all inner identifier quoting, parameter declarations, procedure options, the `AS` keyword itself, and the body; chuck contributes only the `CREATE OR ALTER PROCEDURE <qualified-name>` preamble. Ordering between procedures and the tables / views they read is caller-owned: create procedures after their dependencies, drop them before. SQL Agent jobs and `msdb`-level admin objects are intentionally out of scope for this primitive.
 
 ### Schema Snapshots
 

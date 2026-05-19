@@ -93,21 +93,29 @@ func (v *ViewDef) CreateSQL(d chuck.Dialect) string {
 // statement, which matches how the rest of chuck emits MSSQL DDL (one
 // statement per Exec).
 func (v *ViewDef) CreateOrReplaceSQL(d chuck.Dialect) []string {
+	return v.createOrReplaceWithBody(d, v.body)
+}
+
+// createOrReplaceWithBody renders the same dialect-idiomatic create-or-replace
+// statements as CreateOrReplaceSQL, but with a caller-supplied body override.
+// Used by the option-aware Apply / Validate helpers to inject an ownership
+// notice into the body payload without mutating the underlying ViewDef.
+func (v *ViewDef) createOrReplaceWithBody(d chuck.Dialect, body string) []string {
 	qt := v.QualifiedNameFor(d)
 	switch d.Engine() {
 	case chuck.Postgres:
-		return []string{fmt.Sprintf("CREATE OR REPLACE VIEW %s AS %s", qt, v.body)}
+		return []string{fmt.Sprintf("CREATE OR REPLACE VIEW %s AS %s", qt, body)}
 	case chuck.MSSQL:
-		return []string{fmt.Sprintf("CREATE OR ALTER VIEW %s AS %s", qt, v.body)}
+		return []string{fmt.Sprintf("CREATE OR ALTER VIEW %s AS %s", qt, body)}
 	case chuck.SQLite:
 		return []string{
 			fmt.Sprintf("DROP VIEW IF EXISTS %s", qt),
-			fmt.Sprintf("CREATE VIEW %s AS %s", qt, v.body),
+			fmt.Sprintf("CREATE VIEW %s AS %s", qt, body),
 		}
 	default:
 		return []string{
 			fmt.Sprintf("DROP VIEW IF EXISTS %s", qt),
-			fmt.Sprintf("CREATE VIEW %s AS %s", qt, v.body),
+			fmt.Sprintf("CREATE VIEW %s AS %s", qt, body),
 		}
 	}
 }

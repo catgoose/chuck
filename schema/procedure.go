@@ -114,10 +114,23 @@ func (p *ProcedureDef) QualifiedNameFor(d chuck.Dialect) string {
 //
 // Returns ErrProcedureDialectUnsupported on non-MSSQL dialects.
 func (p *ProcedureDef) CreateOrAlterSQL(d chuck.Dialect) (string, error) {
+	return p.createOrAlterWithDefinition(d, p.definition)
+}
+
+// createOrAlterWithDefinition renders the same dialect-idiomatic
+// CREATE OR ALTER PROCEDURE statement as CreateOrAlterSQL, but with a
+// caller-supplied definition override. Used by the option-aware Apply /
+// Validate helpers to inject an ownership notice into the definition payload
+// without mutating the underlying ProcedureDef. The injected notice sits in a
+// grammar-safe position (between the qualified name and the first token of
+// the caller-supplied definition) because T-SQL accepts `/* ... */` block
+// comments wherever whitespace is legal — including before parameter
+// declarations and the AS keyword.
+func (p *ProcedureDef) createOrAlterWithDefinition(d chuck.Dialect, definition string) (string, error) {
 	if d.Engine() != chuck.MSSQL {
 		return "", fmt.Errorf("%w: %s", ErrProcedureDialectUnsupported, d.Engine())
 	}
-	return fmt.Sprintf("CREATE OR ALTER PROCEDURE %s %s", p.QualifiedNameFor(d), p.definition), nil
+	return fmt.Sprintf("CREATE OR ALTER PROCEDURE %s %s", p.QualifiedNameFor(d), definition), nil
 }
 
 // DropSQL returns a single safe `DROP PROCEDURE` statement that probes

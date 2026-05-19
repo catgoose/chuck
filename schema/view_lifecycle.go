@@ -273,7 +273,21 @@ func canonicalizeViewBody(s string) string {
 // `errors.Is(err, ErrViewBodyComparisonUnsupported)` and treat it as success;
 // callers that need stricter body assertions should fetch `LiveViewBody` and
 // run their own comparison.
+//
+// ValidateView is a thin wrapper around ValidateViewWithOptions that passes
+// the zero CodeObjectOptions, so callers that opt into an ownership notice
+// during apply must use ValidateViewWithOptions with the same options struct
+// to avoid false drift.
 func ValidateView(ctx context.Context, db *sql.DB, d chuck.Dialect, v *ViewDef) error {
+	return ValidateViewWithOptions(ctx, db, d, CodeObjectOptions{}, v)
+}
+
+// ValidateViewWithOptions is the option-aware counterpart to ValidateView.
+// When opts.OwnershipNotice is set, the declared body is prefixed with the
+// rendered ownership comment before canonical comparison, so apply with the
+// same options followed by validate with the same options does not report
+// false drift.
+func ValidateViewWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, v *ViewDef) error {
 	live, exists, err := LiveViewBody(ctx, db, d, v)
 	if err != nil {
 		return err
@@ -285,16 +299,17 @@ func ValidateView(ctx context.Context, db *sql.DB, d chuck.Dialect, v *ViewDef) 
 			Reason:  "view does not exist",
 		}}}
 	}
+	declared := applyOwnershipNoticePrefix(v.Body(), opts)
 	if d.Engine() == chuck.Postgres {
 		return &ViewDriftError{Drifts: []ViewDrift{{
 			Object:                v.Object(),
 			BodyComparisonSkipped: true,
-			DeclaredBody:          v.Body(),
+			DeclaredBody:          declared,
 			LiveBody:              live,
 			Reason:                "pg_get_viewdef canonicalization (star expansion, fully-qualified identifiers, inserted casts) makes textual body comparison unreliable; existence confirmed",
 		}}}
 	}
-	declaredCanon := canonicalizeViewBody(v.Body())
+	declaredCanon := canonicalizeViewBody(declared)
 	liveCanon := canonicalizeViewBody(live)
 	if declaredCanon == liveCanon {
 		return nil
@@ -312,9 +327,16 @@ func ValidateView(ctx context.Context, db *sql.DB, d chuck.Dialect, v *ViewDef) 
 // into a single `*ViewDriftError`. Infrastructure errors short-circuit and
 // are returned directly. Returns nil if every view matches.
 func ValidateViews(ctx context.Context, db *sql.DB, d chuck.Dialect, views ...*ViewDef) error {
+	return ValidateViewsWithOptions(ctx, db, d, CodeObjectOptions{}, views...)
+}
+
+// ValidateViewsWithOptions is the option-aware counterpart to ValidateViews.
+// See ValidateViewWithOptions for the per-view semantics; aggregation behavior
+// is identical to ValidateViews.
+func ValidateViewsWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, views ...*ViewDef) error {
 	var drifts []ViewDrift
 	for _, v := range views {
-		err := ValidateView(ctx, db, d, v)
+		err := ValidateViewWithOptions(ctx, db, d, opts, v)
 		if err == nil {
 			continue
 		}
@@ -340,8 +362,22 @@ func ValidateViews(ctx context.Context, db *sql.DB, d chuck.Dialect, views ...*V
 // pre-flight drift check; callers that want validate-then-apply semantics
 // should call ValidateView themselves first and only apply when drift is
 // detected.
+//
+// ApplyView is a thin wrapper around ApplyViewWithOptions that passes the
+// zero CodeObjectOptions; use ApplyViewWithOptions to opt into an
+// ownership-notice prefix.
 func ApplyView(ctx context.Context, db *sql.DB, d chuck.Dialect, v *ViewDef) error {
-	for _, stmt := range v.CreateOrReplaceSQL(d) {
+	return ApplyViewWithOptions(ctx, db, d, CodeObjectOptions{}, v)
+}
+
+// ApplyViewWithOptions is the option-aware counterpart to ApplyView. When
+// opts.OwnershipNotice is set, the body rendered into the live database is
+// prefixed with the corresponding SQL block comment so DB-side readers can
+// see the chuck-owned marker. Callers that use this path should pair it with
+// ValidateViewWithOptions (same opts) to keep apply and validate coherent.
+func ApplyViewWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, v *ViewDef) error {
+	body := applyOwnershipNoticePrefix(v.Body(), opts)
+	for _, stmt := range v.createOrReplaceWithBody(d, body) {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("schema: apply view %q: %w", objectKey(v.Object()), err)
 		}
@@ -353,8 +389,13 @@ func ApplyView(ctx context.Context, db *sql.DB, d chuck.Dialect, v *ViewDef) err
 // the first error encountered; partial application up to that point is left
 // in place (matching the rest of chuck's no-implicit-rollback stance).
 func ApplyViews(ctx context.Context, db *sql.DB, d chuck.Dialect, views ...*ViewDef) error {
+	return ApplyViewsWithOptions(ctx, db, d, CodeObjectOptions{}, views...)
+}
+
+// ApplyViewsWithOptions is the option-aware counterpart to ApplyViews.
+func ApplyViewsWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, views ...*ViewDef) error {
 	for _, v := range views {
-		if err := ApplyView(ctx, db, d, v); err != nil {
+		if err := ApplyViewWithOptions(ctx, db, d, opts, v); err != nil {
 			return err
 		}
 	}

@@ -586,6 +586,42 @@ if dialect.Engine() == chuck.MSSQL {
 
 Chuck does not provide a generalized object-graph scheduler that hides this ordering, because the dependency chain on top of an owned table set is almost always short and linear and a scheduler abstraction would obscure more than it would help. Pick the order in code; the helpers preserve it.
 
+#### Opt-in ownership notice
+
+Owned views and procedures can carry an embedded "owned by https://github.com/catgoose/chuck" notice so DB-side readers (an operator inspecting `sqlite_master.sql` or `sys.sql_modules.definition`) can tell the object is code-owned and find the project directly. The notice is **opt-in**, set once in a `schema.CodeObjectOptions` struct, and passed to the `*WithOptions` variants of the apply/validate helpers — there is no per-definition boilerplate:
+
+```go
+opts := schema.CodeObjectOptions{
+    OwnershipNotice: schema.DefaultOwnershipNotice,
+}
+
+if err := schema.ApplyViewsWithOptions(ctx, db, dialect, opts, views...); err != nil {
+    return err
+}
+if err := schema.ValidateViewsWithOptions(ctx, db, dialect, opts, views...); err != nil {
+    return err
+}
+
+if dialect.Engine() == chuck.MSSQL {
+    if err := schema.ApplyProceduresWithOptions(ctx, db, dialect, opts, procs...); err != nil {
+        return err
+    }
+    if err := schema.ValidateProceduresWithOptions(ctx, db, dialect, opts, procs...); err != nil {
+        return err
+    }
+}
+```
+
+The rendered notice is a SQL block comment (`/* ... */`) prepended to the view body or procedure definition payload. `schema.DefaultOwnershipNotice` is intentionally soft -- it says out-of-band changes "may" fail validation or be overwritten because the `Validate*` and `Apply*` lanes are explicit and Postgres view validation is existence-only. Callers can supply any string they like.
+
+Coherence contract: the same options struct must be used for `Apply*WithOptions` and `Validate*WithOptions`. Mixing the bare helpers with the option-aware ones (e.g. apply with options, validate without) will report drift because the live body now contains the comment the bare declared body does not. The bare `ApplyView` / `ValidateView` / `ApplyProcedure` / `ValidateProcedure` helpers are unchanged: they continue to operate on the raw declared body / definition and emit no comment.
+
+Engine notes:
+
+- **SQLite** stores the view text verbatim in `sqlite_master.sql`, so the comment is fully visible there.
+- **MSSQL** stores both view and procedure text verbatim in `sys.sql_modules.definition`.
+- **Postgres** `pg_get_viewdef` reconstructs the SELECT from the parse tree and discards comments, so the notice will be present in the `CREATE OR REPLACE VIEW` statement chuck issues but will not be visible when an operator reads `pg_get_viewdef` output. This does not produce false drift because Postgres view validation is existence-only (`ErrViewBodyComparisonUnsupported`).
+
 ### Schema Snapshots
 
 Export the declared schema in structured or text format for diffing:

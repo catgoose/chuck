@@ -492,7 +492,7 @@ func TestViewValidateApplyWithOptions_SQLite_OwnershipNotice(t *testing.T) {
 	require.NoError(t, db.QueryRowContext(ctx,
 		`SELECT sql FROM sqlite_master WHERE type='view' AND name=?`, "v_vva_on_open").
 		Scan(&liveSQL))
-	assert.Contains(t, liveSQL, "Owned by chuck")
+	assert.Contains(t, liveSQL, "Owned by https://github.com/catgoose/chuck")
 	assert.Contains(t, liveSQL, "may fail validation or be overwritten")
 
 	// Bare ValidateView (no opts) must see the live notice as body drift,
@@ -549,7 +549,7 @@ func TestProcedureValidateApplyWithOptions_MSSQL(t *testing.T) {
 	live, exists, err := schema.LiveProcedureDefinition(ctx, db, d, proc)
 	require.NoError(t, err)
 	require.True(t, exists)
-	require.Contains(t, live, "Owned by chuck")
+	require.Contains(t, live, "Owned by https://github.com/catgoose/chuck")
 	require.Contains(t, live, "may fail validation or be overwritten")
 
 	// Bare ValidateProcedure (no opts) must see the live notice as drift.

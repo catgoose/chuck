@@ -588,7 +588,7 @@ Chuck does not provide a generalized object-graph scheduler that hides this orde
 
 #### Opt-in ownership notice
 
-Owned views and procedures can carry an embedded "owned by chuck" notice so DB-side readers (an operator inspecting `sqlite_master.sql` or `sys.sql_modules.definition`) can tell the object is code-owned. The notice is **opt-in**, set once in a `schema.CodeObjectOptions` struct, and passed to the `*WithOptions` variants of the apply/validate helpers — there is no per-definition boilerplate:
+Owned views and procedures can carry an embedded "owned by https://github.com/catgoose/chuck" notice so DB-side readers (an operator inspecting `sqlite_master.sql` or `sys.sql_modules.definition`) can tell the object is code-owned and find the project directly. The notice is **opt-in**, set once in a `schema.CodeObjectOptions` struct, and passed to the `*WithOptions` variants of the apply/validate helpers — there is no per-definition boilerplate:
 
 ```go
 opts := schema.CodeObjectOptions{

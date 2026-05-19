@@ -30,7 +30,7 @@ func TestRenderOwnershipComment(t *testing.T) {
 		got := renderOwnershipComment(DefaultOwnershipNotice)
 		assert.True(t, strings.HasPrefix(got, "/* "))
 		assert.True(t, strings.HasSuffix(got, " */"))
-		assert.Contains(t, got, "Owned by chuck")
+		assert.Contains(t, got, "Owned by https://github.com/catgoose/chuck")
 		assert.Contains(t, got, "may fail validation")
 	})
 }

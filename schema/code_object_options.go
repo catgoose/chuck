@@ -48,8 +48,10 @@ type CodeObjectOptions struct {
 // "may" fail validation or be overwritten because the explicit Validate* /
 // Apply* lanes leave that choice to the caller, and Postgres view validation
 // is existence-only today (see ErrViewBodyComparisonUnsupported), so a
-// stronger promise would be dishonest.
-const DefaultOwnershipNotice = "Owned by chuck. Do not edit in database.\n" +
+// stronger promise would be dishonest. The notice embeds the chuck GitHub
+// URL rather than the bare project name so DB readers who do not know what
+// "chuck" is can find the project directly.
+const DefaultOwnershipNotice = "Owned by https://github.com/catgoose/chuck. Do not edit in database.\n" +
 	"Out-of-band changes may fail validation or be overwritten by apply/bootstrap."
 
 // renderOwnershipComment formats a notice as a SQL block comment, or returns

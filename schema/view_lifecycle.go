@@ -275,18 +275,20 @@ func canonicalizeViewBody(s string) string {
 // run their own comparison.
 //
 // ValidateView is a thin wrapper around ValidateViewWithOptions that passes
-// the zero CodeObjectOptions, so callers that opt into an ownership notice
-// during apply must use ValidateViewWithOptions with the same options struct
-// to avoid false drift.
+// the zero CodeObjectOptions, which neither injects nor tolerates a notice.
 func ValidateView(ctx context.Context, db *sql.DB, d chuck.Dialect, v *ViewDef) error {
 	return ValidateViewWithOptions(ctx, db, d, CodeObjectOptions{}, v)
 }
 
 // ValidateViewWithOptions is the option-aware counterpart to ValidateView.
-// When opts.OwnershipNotice is set, the declared body is prefixed with the
-// rendered ownership comment before canonical comparison, so apply with the
-// same options followed by validate with the same options does not report
-// false drift.
+// Ownership decoration is apply-owned, not declaration-owned: when
+// opts.OwnershipNotice or opts.DocPreamble are configured, the exact
+// rendered prefix is stripped from the live body before canonical
+// comparison. Live bodies that do not carry the configured markers still
+// validate cleanly against the same declared body, so validate-only callers
+// can pass options without forcing markers into the live object. Live
+// bodies that carry a different leading comment (including a stale notice
+// that no longer matches the configured value) still report drift.
 func ValidateViewWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, v *ViewDef) error {
 	live, exists, err := LiveViewBody(ctx, db, d, v)
 	if err != nil {
@@ -299,18 +301,18 @@ func ValidateViewWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, o
 			Reason:  "view does not exist",
 		}}}
 	}
-	declared := applyOwnershipNoticePrefix(v.Body(), opts)
 	if d.Engine() == chuck.Postgres {
 		return &ViewDriftError{Drifts: []ViewDrift{{
 			Object:                v.Object(),
 			BodyComparisonSkipped: true,
-			DeclaredBody:          declared,
+			DeclaredBody:          v.Body(),
 			LiveBody:              live,
 			Reason:                "pg_get_viewdef canonicalization (star expansion, fully-qualified identifiers, inserted casts) makes textual body comparison unreliable; existence confirmed",
 		}}}
 	}
-	declaredCanon := canonicalizeViewBody(declared)
-	liveCanon := canonicalizeViewBody(live)
+	liveStripped := stripConfiguredApplyPrefix(live, opts)
+	declaredCanon := canonicalizeViewBody(v.Body())
+	liveCanon := canonicalizeViewBody(liveStripped)
 	if declaredCanon == liveCanon {
 		return nil
 	}

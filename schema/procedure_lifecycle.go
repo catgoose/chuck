@@ -148,18 +148,20 @@ func stripCreateProcedurePreamble(s string) string {
 // differs. Returns ErrProcedureDialectUnsupported on non-MSSQL dialects.
 //
 // ValidateProcedure is a thin wrapper around ValidateProcedureWithOptions
-// that passes the zero CodeObjectOptions; callers that opt into an ownership
-// notice during apply must use ValidateProcedureWithOptions with the same
-// options struct to avoid false drift.
+// that passes the zero CodeObjectOptions, which neither injects nor
+// tolerates a notice.
 func ValidateProcedure(ctx context.Context, db *sql.DB, d chuck.Dialect, p *ProcedureDef) error {
 	return ValidateProcedureWithOptions(ctx, db, d, CodeObjectOptions{}, p)
 }
 
 // ValidateProcedureWithOptions is the option-aware counterpart to
-// ValidateProcedure. When opts.OwnershipNotice is set, the declared
-// definition is prefixed with the rendered ownership comment before
-// canonical comparison so apply and validate stay coherent under the same
-// options.
+// ValidateProcedure. Ownership decoration is apply-owned, not
+// declaration-owned: when opts.OwnershipNotice or opts.DocPreamble are
+// configured, the exact rendered prefix is stripped from the live
+// definition before canonical comparison. Live definitions that do not
+// carry the configured markers still validate cleanly against the same
+// declared definition; live definitions that carry a different leading
+// comment (including a stale notice) still report drift.
 func ValidateProcedureWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, p *ProcedureDef) error {
 	if d.Engine() != chuck.MSSQL {
 		return fmt.Errorf("%w: %s", ErrProcedureDialectUnsupported, d.Engine())
@@ -175,9 +177,9 @@ func ValidateProcedureWithOptions(ctx context.Context, db *sql.DB, d chuck.Diale
 			Reason:  "procedure does not exist",
 		}}}
 	}
-	declared := applyOwnershipNoticePrefix(p.Definition(), opts)
-	declaredCanon := canonicalizeViewBody(declared)
-	liveCanon := canonicalizeViewBody(live)
+	liveStripped := stripConfiguredApplyPrefix(live, opts)
+	declaredCanon := canonicalizeViewBody(p.Definition())
+	liveCanon := canonicalizeViewBody(liveStripped)
 	if declaredCanon == liveCanon {
 		return nil
 	}

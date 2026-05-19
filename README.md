@@ -965,7 +965,7 @@ Before chuck: hand-roll WHERE clauses, duplicate column lists, maintain separate
 
 After chuck: `dbrepo.NewWhere().NotDeleted().HasStatus("active")`.
 
-The `dbrepo` package provides composable helpers that keep SQL visible. Functions use `@Name` placeholders with `sql.Named()` for dialect-agnostic parameter binding.
+The `dbrepo` package provides composable helpers that keep SQL visible. By default, the named fragment helpers (`SetClause`, `Placeholders`, `InsertInto`, `UpsertInto`, etc.) and `UpdateBuilder` emit `@Name` placeholders paired with `sql.Named()`. This works directly against `database/sql` drivers that translate `sql.NamedArg` into native parameter syntax (e.g. `mattn/go-sqlite3`, `microsoft/go-mssqldb`, `jackc/pgx`), but it is **not** universally driver-agnostic: `lib/pq` and `sqlx.Rebind` do not understand `@Name` tokens, so callers on that stack must use the positional-bind escape hatches (`BulkInsertInto`, `UpdateBuilder.SetValues` -- see [UpdateBuilder](#updatebuilder)).
 
 ### Building Queries
 
@@ -1166,6 +1166,30 @@ query, args := ub.Build()
 Chain `.Returning("id")` for Postgres/SQLite RETURNING clause support (no-op on MSSQL).
 
 WhereBuilder's semantic filters are most valuable here -- accidentally updating soft-deleted rows is a real bug that `.NotDeleted()` prevents.
+
+#### Positional bind opt-out (`SetValues`)
+
+The default `@Name` SET clause is opaque to `lib/pq` and to `sqlx.Rebind` (issue [#71](https://github.com/catgoose/chuck/issues/71)). Call `.SetValues(...)` to opt the SET clause out of `@Name` placeholders and into positional `?` placeholders that survive `sqlx.Rebind`:
+
+```go
+query, args := dbrepo.NewUpdate("accounts", "last_digest_sent_at").
+    WithDialect(pgDialect).
+    SetValues(time.Now()).
+    Where(dbrepo.NewWhere().And("id = ?", accountID)).
+    Build()
+// query: UPDATE "accounts" SET "last_digest_sent_at" = ? WHERE id = ?
+// args:  [time.Now(), accountID]
+
+// Feed it through sqlx.Rebind for lib/pq:
+result, err := db.ExecContext(ctx, sqlx.Rebind(sqlx.DOLLAR, query), args...)
+```
+
+Contract:
+
+- SET values are supplied in column-declaration order (the order passed to `NewUpdate`); `Build` panics if the count does not match the column count.
+- Returned args slice is `<SET values...> <WHERE args...>`. WHERE conditions are caller-supplied -- use `?` placeholders inside `NewWhere().And(...)` fragments so `sqlx.Rebind` rewrites SET and WHERE together.
+- Dialect identifier quoting (`WithDialect`) still applies to column identifiers; only the placeholder shape changes.
+- The default named-placeholder path is unchanged when `SetValues` is not called.
 
 ### DeleteBuilder
 

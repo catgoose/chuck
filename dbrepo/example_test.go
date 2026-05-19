@@ -248,6 +248,25 @@ func ExampleUpsertIntoQ() {
 	// INSERT INTO "users" ("email", "name", "age") VALUES (@Email, @Name, @Age) ON CONFLICT ("email") DO UPDATE SET "name" = EXCLUDED."name", "age" = EXCLUDED."age"
 }
 
+func ExampleUpdateBuilder_SetValues() {
+	// SetValues opts out of the default @Name placeholders and into
+	// positional `?` placeholders, prepending the supplied SET values to
+	// the args slice. This is the path for callers that route their query
+	// through sqlx.Rebind / lib/pq, which do not understand @Name tokens.
+	d, _ := chuck.New(chuck.Postgres)
+	query, args := dbrepo.NewUpdate("accounts", "last_digest_sent_at").
+		WithDialect(d).
+		SetValues("2026-05-18T00:00:00Z").
+		Where(dbrepo.NewWhere().And("id = ?", 42)).
+		Build()
+
+	fmt.Println(query)
+	fmt.Println(args)
+	// Output:
+	// UPDATE "accounts" SET "last_digest_sent_at" = ? WHERE id = ?
+	// [2026-05-18T00:00:00Z 42]
+}
+
 func ExampleBuildOrderByClause() {
 	columnMap := map[string]string{
 		"name":       "Name",

@@ -1,17 +1,24 @@
 // Package dbrepo provides composable SQL fragment helpers for building queries.
 //
-// Functions in this package use @Name placeholders (e.g., @ID, @Name) which rely on
-// database/sql's sql.Named() for driver-level parameter translation. This is distinct
-// from the chuck.Dialect.Placeholder() method which returns engine-specific positional
-// syntax ($1, ?, @p1) for raw SQL composition.
+// Most helpers in this package use @Name placeholders (e.g., @ID, @Name) which
+// rely on database/sql's sql.Named() for driver-level parameter translation.
+// This is distinct from the chuck.Dialect.Placeholder() method which returns
+// engine-specific positional syntax ($1, ?, @p1) for raw SQL composition.
 //
-// The @Name convention works because database/sql drivers translate sql.NamedArg values
-// into their native parameter syntax at execution time. This means dbrepo output is
-// dialect-agnostic — the same query string works across all engines when paired with
-// sql.Named() arguments.
+// The @Name convention works on database/sql drivers that translate
+// sql.NamedArg into native parameter syntax — mattn/go-sqlite3,
+// microsoft/go-mssqldb, and jackc/pgx all do this. It does NOT work on
+// lib/pq, which leaves @Name tokens verbatim, and it does not survive
+// sqlx.Rebind, which only recognizes ? and :name. Callers on those stacks
+// should use the positional-bind escape hatches:
 //
-// For identifier quoting, use the Q-suffixed variants (ColumnsQ, SetClauseQ, InsertIntoQ)
-// which accept a chuck.Dialect and quote table/column names via QuoteIdentifier.
+//   - BulkInsertInto: dialect-positional placeholders for INSERT batches.
+//   - UpdateBuilder.SetValues: opt-out from @Name on UPDATE statements,
+//     emitting ? placeholders that survive sqlx.Rebind.
+//
+// For identifier quoting, use the Q-suffixed variants (ColumnsQ, SetClauseQ,
+// InsertIntoQ) which accept a chuck.Dialect and quote table/column names via
+// QuoteIdentifier.
 package dbrepo
 
 import (

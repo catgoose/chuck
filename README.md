@@ -20,6 +20,7 @@
     - [Table Dependency Ordering](#table-dependency-ordering)
     - [Owned Views](#owned-views)
     - [Owned Procedures (MSSQL)](#owned-procedures-mssql)
+    - [Code-Object Validate and Apply](#code-object-validate-and-apply)
     - [Schema Snapshots](#schema-snapshots)
     - [Live Schema Snapshots](#live-schema-snapshots)
     - [Schema Validation](#schema-validation)
@@ -498,6 +499,92 @@ Lifecycle rules:
 - **Postgres / SQLite** are explicitly unsupported in this first pass — the lifecycle methods return `schema.ErrProcedureDialectUnsupported` instead of silently no-op'ing. Use `errors.Is(err, schema.ErrProcedureDialectUnsupported)` to branch your bootstrap when the same code path runs against a non-MSSQL engine.
 
 The definition is taken verbatim. Callers own all inner identifier quoting, parameter declarations, procedure options, the `AS` keyword itself, and the body; chuck contributes only the `CREATE OR ALTER PROCEDURE <qualified-name>` preamble. Ordering between procedures and the tables / views they read is caller-owned: create procedures after their dependencies, drop them before. SQL Agent jobs and `msdb`-level admin objects are intentionally out of scope for this primitive.
+
+### Code-Object Validate and Apply
+
+Tables stay on the strict `Ensure(...)` / `DiffSchema(...)` / `ValidateSchema(...)` covenant — relational data must never be auto-migrated, and drift in a table is always an error to escalate. Views and procedures are different: their bodies are code, callers usually want them to track the declaration the same way application code tracks `main.go`, and the safe answer is an idempotent re-apply. Chuck exposes explicit verb helpers so bootstrap code can pick the behavior intentionally rather than receiving it as a side effect of `Ensure`:
+
+```go
+// Views (all dialects):
+schema.ApplyView(ctx, db, dialect, RefreshDashboardView)
+schema.ApplyViews(ctx, db, dialect, v1, v2, v3) // caller-ordered, dependency-aware
+schema.ValidateView(ctx, db, dialect, RefreshDashboardView)
+schema.ValidateViews(ctx, db, dialect, v1, v2, v3)
+
+// Procedures (MSSQL only):
+schema.ApplyProcedure(ctx, db, dialect, RefreshDashboardProc)
+schema.ApplyProcedures(ctx, db, dialect, p1, p2)
+schema.ValidateProcedure(ctx, db, dialect, RefreshDashboardProc)
+schema.ValidateProcedures(ctx, db, dialect, p1, p2)
+```
+
+`Apply*` is one-way: declared definition overwrites the live object. It is idempotent on Postgres / MSSQL (`CREATE OR REPLACE` / `CREATE OR ALTER`) and effectively idempotent on SQLite (`DROP IF EXISTS` + `CREATE`). `Apply*` does no pre-flight drift check — callers that want validate-then-apply semantics call `Validate*` first and apply only when drift is reported.
+
+`Validate*` confirms the object exists and, where the engine stores definitions verbatim, also confirms the body / definition text matches the declaration after canonical normalization (whitespace collapse, trailing-semicolon strip, CREATE-preamble strip):
+
+| Object     | Engine   | Existence | Body / definition comparison                                                                        |
+| ---------- | -------- | --------- | --------------------------------------------------------------------------------------------------- |
+| View       | SQLite   | yes       | yes (`sqlite_master.sql` stored verbatim)                                                           |
+| View       | MSSQL    | yes       | yes (`sys.sql_modules.definition` stored verbatim)                                                  |
+| View       | Postgres | yes       | **fails loud** — returns `ErrViewBodyComparisonUnsupported`; `pg_get_viewdef` canonicalizes too aggressively to support honest text comparison |
+| Procedure  | MSSQL    | yes       | yes (`sys.sql_modules.definition` stored verbatim)                                                  |
+| Procedure  | other    | n/a       | returns `schema.ErrProcedureDialectUnsupported`                                                     |
+
+Postgres view-body comparison is intentionally not attempted: `pg_get_viewdef` expands `SELECT *` into explicit column lists, fully qualifies references, and inserts casts, so a textual compare against the declared body produces false drift on legitimate-looking declarations. Rather than silently returning success on existence, `ValidateView` on Postgres fails loud with a `*schema.ViewDriftError` whose single entry has `BodyComparisonSkipped=true` and unwraps to `schema.ErrViewBodyComparisonUnsupported`. Callers that want existence-only semantics on Postgres can opt in explicitly:
+
+```go
+if err := schema.ValidateView(ctx, db, dialect, viewDef); err != nil {
+    if errors.Is(err, schema.ErrViewBodyComparisonUnsupported) {
+        // Postgres: view exists, body compare unavailable — treat as success.
+    } else {
+        return err // ErrViewMissing or infra failure: still hard fail.
+    }
+}
+```
+
+Callers that need a stricter body assertion can fetch the live body via `schema.LiveViewBody(ctx, db, dialect, viewDef)` and run their own comparison against a canonicalized form they trust.
+
+Drift surfaces as a structured error:
+
+```go
+err := schema.ValidateViews(ctx, db, dialect, v1, v2, v3)
+if err != nil {
+    var drift *schema.ViewDriftError
+    if errors.As(err, &drift) {
+        for _, d := range drift.Drifts {
+            // d.Object, d.Missing, d.BodyMismatch, d.BodyComparisonSkipped,
+            // d.DeclaredBody, d.LiveBody, d.Reason
+        }
+    }
+    // For single-cause results, the error also unwraps to a sentinel:
+    if errors.Is(err, schema.ErrViewMissing)  { /* none of the views exist */ }
+    if errors.Is(err, schema.ErrViewBodyDrift) { /* every drifted view is a body mismatch */ }
+    if errors.Is(err, schema.ErrViewBodyComparisonUnsupported) {
+        // Every drift was a body-compare-skip (Postgres). Existence confirmed
+        // for all — callers that want existence-only semantics treat this as
+        // success.
+    }
+}
+```
+
+`schema.ProcedureDriftError` has the same shape with sentinels `schema.ErrProcedureMissing` and `schema.ErrProcedureDefinitionDrift`. Mixed-cause aggregate results (some missing + some drifted) intentionally do not unwrap to either sentinel, so callers can't branch on a single cause when the real failure mode is heterogeneous.
+
+The intended ordering in bootstrap code stays caller-owned:
+
+```go
+// Tables strict — drift always fails, never auto-applies.
+if _, err := schema.Ensure(ctx, db, dialect, tables); err != nil { return err }
+
+// Views second — apply unconditionally, or validate-then-apply.
+if err := schema.ApplyViews(ctx, db, dialect, views...); err != nil { return err }
+
+// Procedures last — MSSQL only; non-MSSQL deployments skip this branch.
+if dialect.Engine() == chuck.MSSQL {
+    if err := schema.ApplyProcedures(ctx, db, dialect, procs...); err != nil { return err }
+}
+```
+
+Chuck does not provide a generalized object-graph scheduler that hides this ordering, because the dependency chain on top of an owned table set is almost always short and linear and a scheduler abstraction would obscure more than it would help. Pick the order in code; the helpers preserve it.
 
 ### Schema Snapshots
 

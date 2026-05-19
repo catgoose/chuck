@@ -310,3 +310,144 @@ func TestDropInboundForeignKeysMSSQL(t *testing.T) {
 		}
 	})
 }
+
+// TestViewValidateApply_SQLite exercises the validate/apply lane against
+// in-memory SQLite end-to-end: apply a declared view, validate it matches,
+// drift the live body out-of-band, validate the drift is detected, then
+// re-apply and validate it is gone. Uses SQLite because the lane works on
+// all dialects but SQLite needs no env DSN.
+func TestViewValidateApply_SQLite(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx := context.Background()
+	d := chuck.SQLiteDialect{}
+
+	_, err = db.ExecContext(ctx, `CREATE TABLE vva_tasks (id INTEGER PRIMARY KEY, done INTEGER)`)
+	require.NoError(t, err)
+	defer func() { _, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS vva_tasks`) }()
+
+	v := schema.NewView("v_vva_open", "SELECT id FROM vva_tasks WHERE done = 0")
+	defer func() { _, _ = db.ExecContext(ctx, v.DropSQL(d)) }()
+
+	require.NoError(t, schema.ApplyView(ctx, db, d, v))
+	require.NoError(t, schema.ValidateView(ctx, db, d, v),
+		"ValidateView must report a clean match immediately after ApplyView")
+
+	// Drift the live view out-of-band.
+	_, err = db.ExecContext(ctx, `DROP VIEW v_vva_open`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `CREATE VIEW v_vva_open AS SELECT id FROM vva_tasks WHERE done = 1`)
+	require.NoError(t, err)
+
+	err = schema.ValidateView(ctx, db, d, v)
+	require.Error(t, err, "out-of-band body change must be detected")
+	assert.ErrorIs(t, err, schema.ErrViewBodyDrift)
+
+	// ApplyView should restore the declared body.
+	require.NoError(t, schema.ApplyView(ctx, db, d, v))
+	require.NoError(t, schema.ValidateView(ctx, db, d, v),
+		"validate must pass again after re-apply")
+}
+
+// TestValidateView_Postgres_FailsLoud asserts the Postgres ValidateView
+// contract: existence is confirmed, but body comparison is NOT silently
+// green-lit. After apply, validate must return a *ViewDriftError whose entry
+// has BodyComparisonSkipped=true and unwraps to
+// ErrViewBodyComparisonUnsupported. Gated by CHUCK_POSTGRES_URL.
+func TestValidateView_Postgres_FailsLoud(t *testing.T) {
+	dsn := os.Getenv("CHUCK_POSTGRES_URL")
+	if dsn == "" {
+		t.Skip("CHUCK_POSTGRES_URL not set")
+	}
+
+	ctx := context.Background()
+	db, d, err := chuck.OpenURL(ctx, dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS vva_pg_tasks (id SERIAL PRIMARY KEY, done BOOLEAN)`)
+	require.NoError(t, err)
+	defer func() { _, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS vva_pg_tasks`) }()
+
+	v := schema.NewView("v_vva_pg_open", "SELECT id FROM vva_pg_tasks WHERE done = FALSE")
+	defer func() { _, _ = db.ExecContext(ctx, v.DropSQL(d)) }()
+
+	// Missing → ValidateView reports drift wrapping ErrViewMissing.
+	err = schema.ValidateView(ctx, db, d, v)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, schema.ErrViewMissing,
+		"missing view on Postgres must still fail loud with ErrViewMissing")
+
+	require.NoError(t, schema.ApplyView(ctx, db, d, v))
+
+	// Exists but body comparison is unavailable on Postgres → must fail loud
+	// with ErrViewBodyComparisonUnsupported instead of returning nil.
+	err = schema.ValidateView(ctx, db, d, v)
+	require.Error(t, err, "Postgres ValidateView must NOT silently green-light when body compare is unavailable")
+	assert.ErrorIs(t, err, schema.ErrViewBodyComparisonUnsupported)
+
+	var drift *schema.ViewDriftError
+	require.ErrorAs(t, err, &drift)
+	require.Len(t, drift.Drifts, 1)
+	assert.True(t, drift.Drifts[0].BodyComparisonSkipped,
+		"Postgres drift entry must set BodyComparisonSkipped so callers can see why compare was skipped")
+	assert.False(t, drift.Drifts[0].Missing)
+	assert.False(t, drift.Drifts[0].BodyMismatch)
+	assert.NotEmpty(t, drift.Drifts[0].Reason)
+}
+
+// TestProcedureValidateApply_MSSQL exercises the validate/apply lane against
+// a live MSSQL instance. Procedure ownership is MSSQL-only, so SQLite /
+// Postgres cannot stand in for this test. Gated by CHUCK_MSSQL_URL.
+func TestProcedureValidateApply_MSSQL(t *testing.T) {
+	dsn := os.Getenv("CHUCK_MSSQL_URL")
+	if dsn == "" {
+		t.Skip("CHUCK_MSSQL_URL not set")
+	}
+
+	ctx := context.Background()
+	db, d, err := chuck.OpenURL(ctx, dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	proc := schema.NewProcedure("usp_chuck_vva_proc",
+		"@Probe INT = 1 AS BEGIN SET NOCOUNT ON; SELECT @Probe AS Probe; END")
+
+	// Best-effort cleanup from any prior failed run.
+	if stmt, derr := proc.DropSQL(d); derr == nil {
+		_, _ = db.ExecContext(ctx, stmt)
+	}
+	defer func() {
+		if stmt, derr := proc.DropSQL(d); derr == nil {
+			_, _ = db.ExecContext(ctx, stmt)
+		}
+	}()
+
+	// Missing → ValidateProcedure reports drift wrapping ErrProcedureMissing.
+	err = schema.ValidateProcedure(ctx, db, d, proc)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, schema.ErrProcedureMissing)
+
+	// Apply then validate matches.
+	require.NoError(t, schema.ApplyProcedure(ctx, db, d, proc))
+	require.NoError(t, schema.ValidateProcedure(ctx, db, d, proc),
+		"validate must pass immediately after apply")
+
+	// Drift definition out-of-band via a different definition body.
+	drifted := schema.NewProcedure("usp_chuck_vva_proc",
+		"@Probe INT = 2 AS BEGIN SET NOCOUNT ON; SELECT @Probe + 100 AS Probe; END")
+	stmt, err := drifted.CreateOrAlterSQL(d)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, stmt)
+	require.NoError(t, err)
+
+	err = schema.ValidateProcedure(ctx, db, d, proc)
+	require.Error(t, err, "out-of-band definition change must be detected")
+	assert.ErrorIs(t, err, schema.ErrProcedureDefinitionDrift)
+
+	// Re-apply the original and validate clean.
+	require.NoError(t, schema.ApplyProcedure(ctx, db, d, proc))
+	require.NoError(t, schema.ValidateProcedure(ctx, db, d, proc))
+}

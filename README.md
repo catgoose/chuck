@@ -526,11 +526,23 @@ schema.ValidateProcedures(ctx, db, dialect, p1, p2)
 | ---------- | -------- | --------- | --------------------------------------------------------------------------------------------------- |
 | View       | SQLite   | yes       | yes (`sqlite_master.sql` stored verbatim)                                                           |
 | View       | MSSQL    | yes       | yes (`sys.sql_modules.definition` stored verbatim)                                                  |
-| View       | Postgres | yes       | **skipped** — `pg_get_viewdef` canonicalizes too aggressively to support honest text comparison     |
+| View       | Postgres | yes       | **fails loud** — returns `ErrViewBodyComparisonUnsupported`; `pg_get_viewdef` canonicalizes too aggressively to support honest text comparison |
 | Procedure  | MSSQL    | yes       | yes (`sys.sql_modules.definition` stored verbatim)                                                  |
 | Procedure  | other    | n/a       | returns `schema.ErrProcedureDialectUnsupported`                                                     |
 
-Postgres view-body comparison is intentionally not attempted: `pg_get_viewdef` expands `SELECT *` into explicit column lists, fully qualifies references, and inserts casts, so a textual compare against the declared body produces false drift on legitimate-looking declarations. `ValidateView` on Postgres confirms existence only. Callers that need a stricter assertion can fetch the live body via `schema.LiveViewBody(ctx, db, dialect, viewDef)` and run their own comparison against a canonicalized form they trust.
+Postgres view-body comparison is intentionally not attempted: `pg_get_viewdef` expands `SELECT *` into explicit column lists, fully qualifies references, and inserts casts, so a textual compare against the declared body produces false drift on legitimate-looking declarations. Rather than silently returning success on existence, `ValidateView` on Postgres fails loud with a `*schema.ViewDriftError` whose single entry has `BodyComparisonSkipped=true` and unwraps to `schema.ErrViewBodyComparisonUnsupported`. Callers that want existence-only semantics on Postgres can opt in explicitly:
+
+```go
+if err := schema.ValidateView(ctx, db, dialect, viewDef); err != nil {
+    if errors.Is(err, schema.ErrViewBodyComparisonUnsupported) {
+        // Postgres: view exists, body compare unavailable — treat as success.
+    } else {
+        return err // ErrViewMissing or infra failure: still hard fail.
+    }
+}
+```
+
+Callers that need a stricter body assertion can fetch the live body via `schema.LiveViewBody(ctx, db, dialect, viewDef)` and run their own comparison against a canonicalized form they trust.
 
 Drift surfaces as a structured error:
 
@@ -547,6 +559,11 @@ if err != nil {
     // For single-cause results, the error also unwraps to a sentinel:
     if errors.Is(err, schema.ErrViewMissing)  { /* none of the views exist */ }
     if errors.Is(err, schema.ErrViewBodyDrift) { /* every drifted view is a body mismatch */ }
+    if errors.Is(err, schema.ErrViewBodyComparisonUnsupported) {
+        // Every drift was a body-compare-skip (Postgres). Existence confirmed
+        // for all — callers that want existence-only semantics treat this as
+        // success.
+    }
 }
 ```
 

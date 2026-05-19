@@ -23,6 +23,18 @@ var ErrViewMissing = errors.New("schema: declared view does not exist in live da
 // missing-object and from infrastructure errors.
 var ErrViewBodyDrift = errors.New("schema: declared view body differs from live database body")
 
+// ErrViewBodyComparisonUnsupported is returned by ValidateView / ValidateViews
+// when the live engine canonicalizes view definitions enough that body-text
+// drift cannot be honestly compared (today: Postgres `pg_get_viewdef` expands
+// `SELECT *`, fully qualifies references, and inserts casts). Validate fails
+// loud with this sentinel rather than silently returning success so callers
+// asking for "validate" cannot mistake existence-only confirmation for a clean
+// body match. Callers that want to opt into existence-only semantics on these
+// engines can detect the sentinel via `errors.Is` and treat it as success;
+// callers that need stricter assertions can fetch `LiveViewBody` and run their
+// own comparison.
+var ErrViewBodyComparisonUnsupported = errors.New("schema: view body comparison unsupported on this engine; existence confirmed")
+
 // ViewDrift describes one declared view whose state in the live database does
 // not match the declared definition. Either Missing is true, or BodyMismatch
 // is true (with DeclaredBody / LiveBody populated for diagnosis).
@@ -43,11 +55,14 @@ type ViewDrift struct {
 }
 
 // ViewDriftError is returned by ValidateView / ValidateViews when one or more
-// declared views are missing or drifted. Drifts holds one entry per offending
-// view, in caller-supplied order. The error wraps ErrViewMissing when every
-// drift is a missing object and ErrViewBodyDrift when every drift is a body
-// mismatch, so the most common single-cause cases can be branched cleanly via
-// errors.Is. Mixed-cause errors do not wrap either sentinel.
+// declared views are missing, drifted, or could not be honestly compared on
+// the live engine. Drifts holds one entry per offending view, in
+// caller-supplied order. The error wraps ErrViewMissing when every drift is a
+// missing object, ErrViewBodyDrift when every drift is a body mismatch, and
+// ErrViewBodyComparisonUnsupported when every drift is a body-comparison-skip
+// (engine canonicalization made textual compare unreliable). Single-cause
+// results can be branched cleanly via errors.Is. Mixed-cause errors do not
+// wrap any sentinel.
 type ViewDriftError struct {
 	Drifts []ViewDrift
 }
@@ -76,6 +91,7 @@ func (e *ViewDriftError) Unwrap() error {
 	}
 	onlyMissing := true
 	onlyBody := true
+	onlySkipped := true
 	for _, d := range e.Drifts {
 		if !d.Missing {
 			onlyMissing = false
@@ -83,12 +99,17 @@ func (e *ViewDriftError) Unwrap() error {
 		if !d.BodyMismatch {
 			onlyBody = false
 		}
+		if !d.BodyComparisonSkipped {
+			onlySkipped = false
+		}
 	}
 	switch {
 	case onlyMissing:
 		return ErrViewMissing
 	case onlyBody:
 		return ErrViewBodyDrift
+	case onlySkipped:
+		return ErrViewBodyComparisonUnsupported
 	default:
 		return nil
 	}
@@ -103,9 +124,11 @@ func (e *ViewDriftError) Unwrap() error {
 // On Postgres the returned body is whatever pg_get_viewdef(..., true) emits:
 // a heavily canonicalized SELECT with expanded stars, fully-qualified
 // references, and inserted casts. That text is exposed verbatim for callers
-// that want to do their own comparison; the package's own ValidateView
-// chooses not to compare it against a declared body because the rewrites
-// produce too much false drift to be honest about.
+// that want to do their own comparison; the package's own ValidateView refuses
+// to compare it against a declared body because the rewrites produce too much
+// false drift to be honest about, and instead returns
+// ErrViewBodyComparisonUnsupported so callers cannot mistake silent success
+// for a clean body match.
 func LiveViewBody(ctx context.Context, db *sql.DB, d chuck.Dialect, v *ViewDef) (body string, exists bool, err error) {
 	switch d.Engine() {
 	case chuck.SQLite:
@@ -242,10 +265,14 @@ func canonicalizeViewBody(s string) string {
 // canonicalized SELECT with expanded stars, fully-qualified references, and
 // inserted casts. That canonicalization is too aggressive to support
 // faithful body-drift detection against a hand-written declared body, so on
-// Postgres ValidateView only confirms existence and records
-// BodyComparisonSkipped=true with an explanatory Reason. Callers that need
-// stricter Postgres view-body assertions should fetch LiveViewBody and run
-// their own comparison.
+// Postgres ValidateView fails loud by returning a `*ViewDriftError` whose
+// single entry has `BodyComparisonSkipped=true` and unwraps to
+// `ErrViewBodyComparisonUnsupported`. Existence is still confirmed: if the
+// view is missing the error unwraps to `ErrViewMissing` instead. Callers that
+// want existence-only semantics on Postgres can branch on
+// `errors.Is(err, ErrViewBodyComparisonUnsupported)` and treat it as success;
+// callers that need stricter body assertions should fetch `LiveViewBody` and
+// run their own comparison.
 func ValidateView(ctx context.Context, db *sql.DB, d chuck.Dialect, v *ViewDef) error {
 	live, exists, err := LiveViewBody(ctx, db, d, v)
 	if err != nil {
@@ -259,7 +286,13 @@ func ValidateView(ctx context.Context, db *sql.DB, d chuck.Dialect, v *ViewDef) 
 		}}}
 	}
 	if d.Engine() == chuck.Postgres {
-		return nil
+		return &ViewDriftError{Drifts: []ViewDrift{{
+			Object:                v.Object(),
+			BodyComparisonSkipped: true,
+			DeclaredBody:          v.Body(),
+			LiveBody:              live,
+			Reason:                "pg_get_viewdef canonicalization (star expansion, fully-qualified identifiers, inserted casts) makes textual body comparison unreliable; existence confirmed",
+		}}}
 	}
 	declaredCanon := canonicalizeViewBody(v.Body())
 	liveCanon := canonicalizeViewBody(live)

@@ -351,6 +351,53 @@ func TestViewValidateApply_SQLite(t *testing.T) {
 		"validate must pass again after re-apply")
 }
 
+// TestValidateView_Postgres_FailsLoud asserts the Postgres ValidateView
+// contract: existence is confirmed, but body comparison is NOT silently
+// green-lit. After apply, validate must return a *ViewDriftError whose entry
+// has BodyComparisonSkipped=true and unwraps to
+// ErrViewBodyComparisonUnsupported. Gated by CHUCK_POSTGRES_URL.
+func TestValidateView_Postgres_FailsLoud(t *testing.T) {
+	dsn := os.Getenv("CHUCK_POSTGRES_URL")
+	if dsn == "" {
+		t.Skip("CHUCK_POSTGRES_URL not set")
+	}
+
+	ctx := context.Background()
+	db, d, err := chuck.OpenURL(ctx, dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS vva_pg_tasks (id SERIAL PRIMARY KEY, done BOOLEAN)`)
+	require.NoError(t, err)
+	defer func() { _, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS vva_pg_tasks`) }()
+
+	v := schema.NewView("v_vva_pg_open", "SELECT id FROM vva_pg_tasks WHERE done = FALSE")
+	defer func() { _, _ = db.ExecContext(ctx, v.DropSQL(d)) }()
+
+	// Missing → ValidateView reports drift wrapping ErrViewMissing.
+	err = schema.ValidateView(ctx, db, d, v)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, schema.ErrViewMissing,
+		"missing view on Postgres must still fail loud with ErrViewMissing")
+
+	require.NoError(t, schema.ApplyView(ctx, db, d, v))
+
+	// Exists but body comparison is unavailable on Postgres → must fail loud
+	// with ErrViewBodyComparisonUnsupported instead of returning nil.
+	err = schema.ValidateView(ctx, db, d, v)
+	require.Error(t, err, "Postgres ValidateView must NOT silently green-light when body compare is unavailable")
+	assert.ErrorIs(t, err, schema.ErrViewBodyComparisonUnsupported)
+
+	var drift *schema.ViewDriftError
+	require.ErrorAs(t, err, &drift)
+	require.Len(t, drift.Drifts, 1)
+	assert.True(t, drift.Drifts[0].BodyComparisonSkipped,
+		"Postgres drift entry must set BodyComparisonSkipped so callers can see why compare was skipped")
+	assert.False(t, drift.Drifts[0].Missing)
+	assert.False(t, drift.Drifts[0].BodyMismatch)
+	assert.NotEmpty(t, drift.Drifts[0].Reason)
+}
+
 // TestProcedureValidateApply_MSSQL exercises the validate/apply lane against
 // a live MSSQL instance. Procedure ownership is MSSQL-only, so SQLite /
 // Postgres cannot stand in for this test. Gated by CHUCK_MSSQL_URL.

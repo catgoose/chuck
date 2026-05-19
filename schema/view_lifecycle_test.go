@@ -180,6 +180,33 @@ func TestApplyView_SQLite_IdempotentReplaceBody(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrViewBodyDrift))
 }
 
+func TestViewDriftError_Unwrap_AllBodyComparisonSkipped(t *testing.T) {
+	// When every drift is a Postgres-style body-comparison-skip, the aggregate
+	// error must unwrap to ErrViewBodyComparisonUnsupported so callers that
+	// want existence-only semantics on those engines can branch on the
+	// sentinel and treat it as success.
+	e := &ViewDriftError{Drifts: []ViewDrift{
+		{Object: chuck.ObjectName{Name: "v_a"}, BodyComparisonSkipped: true, Reason: "pg_get_viewdef canonicalization"},
+		{Object: chuck.ObjectName{Name: "v_b"}, BodyComparisonSkipped: true, Reason: "pg_get_viewdef canonicalization"},
+	}}
+	assert.True(t, errors.Is(e, ErrViewBodyComparisonUnsupported))
+	assert.False(t, errors.Is(e, ErrViewMissing))
+	assert.False(t, errors.Is(e, ErrViewBodyDrift))
+}
+
+func TestViewDriftError_Unwrap_Mixed_SkippedAndMissing_NoWrap(t *testing.T) {
+	// Mixed missing + body-comparison-skipped must not wrap either sentinel:
+	// the existence failure is a hard error and must not be hidden behind the
+	// existence-only escape hatch.
+	e := &ViewDriftError{Drifts: []ViewDrift{
+		{Object: chuck.ObjectName{Name: "v_a"}, Missing: true},
+		{Object: chuck.ObjectName{Name: "v_b"}, BodyComparisonSkipped: true},
+	}}
+	assert.False(t, errors.Is(e, ErrViewMissing))
+	assert.False(t, errors.Is(e, ErrViewBodyDrift))
+	assert.False(t, errors.Is(e, ErrViewBodyComparisonUnsupported))
+}
+
 func TestApplyViews_SQLite_OrderRespected(t *testing.T) {
 	ctx, db, d := openSQLiteForViewLifecycle(t)
 	defer db.Close()

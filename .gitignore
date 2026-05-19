@@ -3,3 +3,4 @@ cover.html
 *.test
 *.exe
 .agents/
+plan.md

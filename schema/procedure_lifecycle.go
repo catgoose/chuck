@@ -146,7 +146,21 @@ func stripCreateProcedurePreamble(s string) string {
 // Returns nil on match. Returns a `*ProcedureDriftError` whose Drifts slice
 // has exactly one entry when the procedure is missing or its definition
 // differs. Returns ErrProcedureDialectUnsupported on non-MSSQL dialects.
+//
+// ValidateProcedure is a thin wrapper around ValidateProcedureWithOptions
+// that passes the zero CodeObjectOptions; callers that opt into an ownership
+// notice during apply must use ValidateProcedureWithOptions with the same
+// options struct to avoid false drift.
 func ValidateProcedure(ctx context.Context, db *sql.DB, d chuck.Dialect, p *ProcedureDef) error {
+	return ValidateProcedureWithOptions(ctx, db, d, CodeObjectOptions{}, p)
+}
+
+// ValidateProcedureWithOptions is the option-aware counterpart to
+// ValidateProcedure. When opts.OwnershipNotice is set, the declared
+// definition is prefixed with the rendered ownership comment before
+// canonical comparison so apply and validate stay coherent under the same
+// options.
+func ValidateProcedureWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, p *ProcedureDef) error {
 	if d.Engine() != chuck.MSSQL {
 		return fmt.Errorf("%w: %s", ErrProcedureDialectUnsupported, d.Engine())
 	}
@@ -161,7 +175,8 @@ func ValidateProcedure(ctx context.Context, db *sql.DB, d chuck.Dialect, p *Proc
 			Reason:  "procedure does not exist",
 		}}}
 	}
-	declaredCanon := canonicalizeViewBody(p.Definition())
+	declared := applyOwnershipNoticePrefix(p.Definition(), opts)
+	declaredCanon := canonicalizeViewBody(declared)
 	liveCanon := canonicalizeViewBody(live)
 	if declaredCanon == liveCanon {
 		return nil
@@ -179,12 +194,19 @@ func ValidateProcedure(ctx context.Context, db *sql.DB, d chuck.Dialect, p *Proc
 // any drift into a single `*ProcedureDriftError`. Infrastructure errors and
 // unsupported-dialect errors short-circuit and are returned directly.
 func ValidateProcedures(ctx context.Context, db *sql.DB, d chuck.Dialect, procs ...*ProcedureDef) error {
+	return ValidateProceduresWithOptions(ctx, db, d, CodeObjectOptions{}, procs...)
+}
+
+// ValidateProceduresWithOptions is the option-aware counterpart to
+// ValidateProcedures. See ValidateProcedureWithOptions for the per-procedure
+// semantics; aggregation behavior is identical to ValidateProcedures.
+func ValidateProceduresWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, procs ...*ProcedureDef) error {
 	if d.Engine() != chuck.MSSQL {
 		return fmt.Errorf("%w: %s", ErrProcedureDialectUnsupported, d.Engine())
 	}
 	var drifts []ProcedureDrift
 	for _, p := range procs {
-		err := ValidateProcedure(ctx, db, d, p)
+		err := ValidateProcedureWithOptions(ctx, db, d, opts, p)
 		if err == nil {
 			continue
 		}
@@ -210,8 +232,24 @@ func ValidateProcedures(ctx context.Context, db *sql.DB, d chuck.Dialect, procs 
 // Returns ErrProcedureDialectUnsupported on non-MSSQL dialects. ApplyProcedure
 // is one-way: declared definition becomes live definition. It does no
 // pre-flight drift check.
+//
+// ApplyProcedure is a thin wrapper around ApplyProcedureWithOptions that
+// passes the zero CodeObjectOptions; use ApplyProcedureWithOptions to opt
+// into an ownership-notice prefix.
 func ApplyProcedure(ctx context.Context, db *sql.DB, d chuck.Dialect, p *ProcedureDef) error {
-	stmt, err := p.CreateOrAlterSQL(d)
+	return ApplyProcedureWithOptions(ctx, db, d, CodeObjectOptions{}, p)
+}
+
+// ApplyProcedureWithOptions is the option-aware counterpart to
+// ApplyProcedure. When opts.OwnershipNotice is set, the definition rendered
+// into the live MSSQL database is prefixed with the corresponding T-SQL
+// block comment, sitting between the qualified procedure name and the first
+// token of the caller's definition payload. Callers that use this path
+// should pair it with ValidateProcedureWithOptions (same opts) to keep apply
+// and validate coherent.
+func ApplyProcedureWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, p *ProcedureDef) error {
+	definition := applyOwnershipNoticePrefix(p.Definition(), opts)
+	stmt, err := p.createOrAlterWithDefinition(d, definition)
 	if err != nil {
 		return err
 	}
@@ -224,11 +262,17 @@ func ApplyProcedure(ctx context.Context, db *sql.DB, d chuck.Dialect, p *Procedu
 // ApplyProcedures applies each declared procedure in caller-supplied order.
 // Returns the first error encountered.
 func ApplyProcedures(ctx context.Context, db *sql.DB, d chuck.Dialect, procs ...*ProcedureDef) error {
+	return ApplyProceduresWithOptions(ctx, db, d, CodeObjectOptions{}, procs...)
+}
+
+// ApplyProceduresWithOptions is the option-aware counterpart to
+// ApplyProcedures.
+func ApplyProceduresWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, procs ...*ProcedureDef) error {
 	if d.Engine() != chuck.MSSQL {
 		return fmt.Errorf("%w: %s", ErrProcedureDialectUnsupported, d.Engine())
 	}
 	for _, p := range procs {
-		if err := ApplyProcedure(ctx, db, d, p); err != nil {
+		if err := ApplyProcedureWithOptions(ctx, db, d, opts, p); err != nil {
 			return err
 		}
 	}

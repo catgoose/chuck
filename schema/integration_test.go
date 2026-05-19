@@ -451,3 +451,117 @@ func TestProcedureValidateApply_MSSQL(t *testing.T) {
 	require.NoError(t, schema.ApplyProcedure(ctx, db, d, proc))
 	require.NoError(t, schema.ValidateProcedure(ctx, db, d, proc))
 }
+
+// TestViewValidateApplyWithOptions_SQLite_OwnershipNotice asserts the
+// opt-in ownership-notice path is internally coherent on SQLite, which
+// stores view text verbatim in sqlite_master.sql and therefore lets us
+// observe the comment landed in the live object.
+//
+// Coherence requirements covered:
+//
+//   - apply-with-options + validate-with-same-options is clean
+//   - the rendered comment is visible in sqlite_master.sql
+//   - bare ValidateView (no opts) sees apply-with-options as drift, because
+//     the live body now contains the notice the declared body does not
+//   - bare ApplyView re-renders without the comment and validate-with-opts
+//     then sees that as drift, proving the contract is symmetric
+func TestViewValidateApplyWithOptions_SQLite_OwnershipNotice(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx := context.Background()
+	d := chuck.SQLiteDialect{}
+
+	_, err = db.ExecContext(ctx, `CREATE TABLE vva_on_tasks (id INTEGER PRIMARY KEY, done INTEGER)`)
+	require.NoError(t, err)
+	defer func() { _, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS vva_on_tasks`) }()
+
+	v := schema.NewView("v_vva_on_open", "SELECT id FROM vva_on_tasks WHERE done = 0")
+	defer func() { _, _ = db.ExecContext(ctx, v.DropSQL(d)) }()
+
+	opts := schema.CodeObjectOptions{OwnershipNotice: schema.DefaultOwnershipNotice}
+
+	require.NoError(t, schema.ApplyViewWithOptions(ctx, db, d, opts, v))
+	require.NoError(t, schema.ValidateViewWithOptions(ctx, db, d, opts, v),
+		"apply-with-options must pair cleanly with validate-with-same-options")
+
+	// Live body in sqlite_master must contain the rendered ownership notice
+	// so DB-side readers can see the chuck-owned marker.
+	var liveSQL string
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT sql FROM sqlite_master WHERE type='view' AND name=?`, "v_vva_on_open").
+		Scan(&liveSQL))
+	assert.Contains(t, liveSQL, "Owned by chuck")
+	assert.Contains(t, liveSQL, "may fail validation or be overwritten")
+
+	// Bare ValidateView (no opts) must see the live notice as body drift,
+	// proving apply and validate must use the same options to stay coherent.
+	err = schema.ValidateView(ctx, db, d, v)
+	require.Error(t, err, "bare ValidateView must report drift when live body carries an apply-only notice")
+	assert.ErrorIs(t, err, schema.ErrViewBodyDrift)
+
+	// Switching to bare ApplyView strips the comment from the live body,
+	// and validate-with-options now sees drift in the opposite direction.
+	require.NoError(t, schema.ApplyView(ctx, db, d, v))
+	require.NoError(t, schema.ValidateView(ctx, db, d, v),
+		"bare apply + bare validate must still be coherent")
+	err = schema.ValidateViewWithOptions(ctx, db, d, opts, v)
+	require.Error(t, err, "validate-with-options must report drift when live body lost its notice")
+	assert.ErrorIs(t, err, schema.ErrViewBodyDrift)
+}
+
+// TestProcedureValidateApplyWithOptions_MSSQL gates on a live MSSQL instance
+// because MSSQL is the only engine with first-class procedure ownership in
+// this release. Proves apply-with-options + validate-with-same-options is
+// coherent and that the rendered comment lands in sys.sql_modules.definition.
+func TestProcedureValidateApplyWithOptions_MSSQL(t *testing.T) {
+	dsn := os.Getenv("CHUCK_MSSQL_URL")
+	if dsn == "" {
+		t.Skip("CHUCK_MSSQL_URL not set")
+	}
+
+	ctx := context.Background()
+	db, d, err := chuck.OpenURL(ctx, dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	proc := schema.NewProcedure("usp_chuck_vva_proc_notice",
+		"@Probe INT = 1 AS BEGIN SET NOCOUNT ON; SELECT @Probe AS Probe; END")
+
+	if stmt, derr := proc.DropSQL(d); derr == nil {
+		_, _ = db.ExecContext(ctx, stmt)
+	}
+	defer func() {
+		if stmt, derr := proc.DropSQL(d); derr == nil {
+			_, _ = db.ExecContext(ctx, stmt)
+		}
+	}()
+
+	opts := schema.CodeObjectOptions{OwnershipNotice: schema.DefaultOwnershipNotice}
+
+	require.NoError(t, schema.ApplyProcedureWithOptions(ctx, db, d, opts, proc))
+	require.NoError(t, schema.ValidateProcedureWithOptions(ctx, db, d, opts, proc),
+		"apply-with-options must pair cleanly with validate-with-same-options")
+
+	// Confirm the live definition carries the comment so operators reading
+	// sys.sql_modules see the chuck-owned marker.
+	live, exists, err := schema.LiveProcedureDefinition(ctx, db, d, proc)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Contains(t, live, "Owned by chuck")
+	require.Contains(t, live, "may fail validation or be overwritten")
+
+	// Bare ValidateProcedure (no opts) must see the live notice as drift.
+	err = schema.ValidateProcedure(ctx, db, d, proc)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, schema.ErrProcedureDefinitionDrift)
+
+	// Bare ApplyProcedure strips the notice; validate-with-options then
+	// reports drift in the opposite direction.
+	require.NoError(t, schema.ApplyProcedure(ctx, db, d, proc))
+	require.NoError(t, schema.ValidateProcedure(ctx, db, d, proc))
+	err = schema.ValidateProcedureWithOptions(ctx, db, d, opts, proc)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, schema.ErrProcedureDefinitionDrift)
+}

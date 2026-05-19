@@ -535,6 +535,77 @@ func TestViewValidateApplyWithOptions_SQLite_OwnershipNotice(t *testing.T) {
 	assert.ErrorIs(t, err, schema.ErrViewBodyDrift)
 }
 
+// TestViewValidateApplyWithOptions_SQLite_DocAnnotation asserts the
+// declaration-owned per-object doc annotation contract on SQLite.
+//
+// Contract covered:
+//
+//   - apply + validate with the same declared annotation is coherent
+//   - the rendered annotation lands in sqlite_master.sql between the
+//     caller-level DocPreamble and the caller-level OwnershipNotice
+//   - changing the declared annotation in code produces validation drift
+//     against a live view rendered from the prior annotation
+//     (declaration-owned semantics, distinct from apply-owned DocPreamble)
+//   - the annotation also drives drift when used without any caller-level
+//     decoration
+func TestViewValidateApplyWithOptions_SQLite_DocAnnotation(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx := context.Background()
+	d := chuck.SQLiteDialect{}
+
+	_, err = db.ExecContext(ctx, `CREATE TABLE vva_da_tasks (id INTEGER PRIMARY KEY, done INTEGER)`)
+	require.NoError(t, err)
+	defer func() { _, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS vva_da_tasks`) }()
+
+	v := schema.NewView("v_vva_da_open", "SELECT id FROM vva_da_tasks WHERE done = 0").
+		WithDocAnnotation("v_vva_da_open v1: returns currently-open task ids")
+	defer func() { _, _ = db.ExecContext(ctx, v.DropSQL(d)) }()
+
+	opts := schema.CodeObjectOptions{
+		OwnershipNotice: schema.DefaultOwnershipNotice,
+		DocPreamble:     "vva_da: declaration-owned annotation contract probe",
+	}
+
+	require.NoError(t, schema.ApplyViewWithOptions(ctx, db, d, opts, v))
+	require.NoError(t, schema.ValidateViewWithOptions(ctx, db, d, opts, v),
+		"apply + validate with same opts and same annotation must be coherent")
+
+	var liveSQL string
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT sql FROM sqlite_master WHERE type='view' AND name=?`, "v_vva_da_open").
+		Scan(&liveSQL))
+
+	docIdx := strings.Index(liveSQL, "declaration-owned annotation contract probe")
+	annIdx := strings.Index(liveSQL, "v_vva_da_open v1: returns currently-open task ids")
+	notIdx := strings.Index(liveSQL, "Owned by https://github.com/catgoose/chuck")
+	require.True(t, docIdx >= 0 && annIdx >= 0 && notIdx >= 0,
+		"all three comment segments must be present in the live SQL")
+	assert.Less(t, docIdx, annIdx, "DocPreamble must render before doc annotation")
+	assert.Less(t, annIdx, notIdx, "doc annotation must render before OwnershipNotice")
+
+	// Declaration-owned drift: change the annotation in code and validate
+	// must complain even though the live SQL still carries the prior
+	// annotation that was apply-rendered.
+	vDrifted := schema.NewView("v_vva_da_open", "SELECT id FROM vva_da_tasks WHERE done = 0").
+		WithDocAnnotation("v_vva_da_open v2: SEMANTIC CHANGE — please review caller")
+	err = schema.ValidateViewWithOptions(ctx, db, d, opts, vDrifted)
+	require.Error(t, err, "declared annotation change must surface as body drift")
+	assert.ErrorIs(t, err, schema.ErrViewBodyDrift)
+
+	// Annotation alone (no caller-level options) still drives drift when
+	// declared annotation disagrees with live.
+	require.NoError(t, schema.ApplyViewWithOptions(ctx, db, d, schema.CodeObjectOptions{}, v))
+	err = schema.ValidateViewWithOptions(ctx, db, d, schema.CodeObjectOptions{}, vDrifted)
+	require.Error(t, err, "annotation-only declaration must drive drift on its own")
+	assert.ErrorIs(t, err, schema.ErrViewBodyDrift)
+
+	// Same declaration as live still validates clean under annotation-only.
+	require.NoError(t, schema.ValidateViewWithOptions(ctx, db, d, schema.CodeObjectOptions{}, v))
+}
+
 // TestProcedureValidateApplyWithOptions_MSSQL gates on a live MSSQL instance
 // because MSSQL is the only engine with first-class procedure ownership in
 // this release. Proves apply-with-options + validate-with-same-options is

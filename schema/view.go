@@ -24,9 +24,10 @@ import (
 // would add weight without buying clarity. Callers wanting explicit ordering
 // can simply create views after their tables and drop them before.
 type ViewDef struct {
-	Name   string
-	schema string
-	body   string
+	Name          string
+	schema        string
+	body          string
+	docAnnotation string
 }
 
 // NewView creates an unqualified owned view with the given name and SELECT
@@ -53,6 +54,25 @@ func (v *ViewDef) WithSchema(schema string) *ViewDef {
 // Schema returns the declared schema namespace for the view, or "" if none.
 func (v *ViewDef) Schema() string {
 	return v.schema
+}
+
+// WithDocAnnotation attaches a declaration-owned doc comment to the view. When
+// set, the annotation renders as a SQL block comment as part of the view's
+// own SQL output (between any caller-level DocPreamble and any caller-level
+// OwnershipNotice) and participates in body-drift comparison: changing the
+// annotation in code produces validation drift against a live view rendered
+// from the prior annotation. This is the per-object counterpart to
+// CodeObjectOptions.DocPreamble, which remains a caller-level apply-owned
+// preamble shared across many objects.
+func (v *ViewDef) WithDocAnnotation(text string) *ViewDef {
+	v.docAnnotation = text
+	return v
+}
+
+// DocAnnotation returns the declared declaration-owned doc annotation for the
+// view, or "" if none.
+func (v *ViewDef) DocAnnotation() string {
+	return v.docAnnotation
 }
 
 // Body returns the raw SELECT body declared for the view.

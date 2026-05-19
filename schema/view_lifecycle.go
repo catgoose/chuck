@@ -226,6 +226,26 @@ func stripCreateViewPreamble(s string) string {
 	return s[loc[1]:]
 }
 
+// declaredBodyWithAnnotation returns the declared body that participates in
+// canonical drift comparison: when the view carries a declaration-owned doc
+// annotation it is rendered as a SQL block comment immediately before the
+// declared body, matching the slot the apply path injects.
+func declaredBodyWithAnnotation(v *ViewDef) string {
+	if c := renderOwnershipComment(v.DocAnnotation()); c != "" {
+		return c + " " + v.Body()
+	}
+	return v.Body()
+}
+
+// declaredDefinitionWithAnnotation is the procedure-side counterpart to
+// declaredBodyWithAnnotation.
+func declaredDefinitionWithAnnotation(p *ProcedureDef) string {
+	if c := renderOwnershipComment(p.DocAnnotation()); c != "" {
+		return c + " " + p.Definition()
+	}
+	return p.Definition()
+}
+
 // canonicalizeStatement normalizes a SQL statement body for drift comparison.
 // Used for both view bodies and procedure definitions. It trims surrounding
 // whitespace, strips trailing semicolons, and collapses runs of internal
@@ -311,8 +331,8 @@ func ValidateViewWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, o
 			Reason:                "pg_get_viewdef canonicalization (star expansion, fully-qualified identifiers, inserted casts) makes textual body comparison unreliable; existence confirmed",
 		}}}
 	}
-	liveStripped := stripConfiguredApplyPrefix(live, opts)
-	declaredCanon := canonicalizeStatement(v.Body())
+	liveStripped := stripConfiguredApplyPrefix(live, opts, v.DocAnnotation())
+	declaredCanon := canonicalizeStatement(declaredBodyWithAnnotation(v))
 	liveCanon := canonicalizeStatement(liveStripped)
 	if declaredCanon == liveCanon {
 		return nil
@@ -379,7 +399,7 @@ func ApplyView(ctx context.Context, db *sql.DB, d chuck.Dialect, v *ViewDef) err
 // see the chuck-owned marker. Callers that use this path should pair it with
 // ValidateViewWithOptions (same opts) to keep apply and validate coherent.
 func ApplyViewWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, v *ViewDef) error {
-	body := applyOwnershipNoticePrefix(v.Body(), opts)
+	body := applyOwnershipNoticePrefix(v.Body(), opts, v.DocAnnotation())
 	for _, stmt := range v.createOrReplaceWithBody(d, body) {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("schema: apply view %q: %w", objectKey(v.Object()), err)

@@ -618,7 +618,17 @@ if dialect.Engine() == chuck.MSSQL {
 - **`OwnershipNotice`** — apply-owned marker. `schema.DefaultOwnershipNotice` is intentionally soft (it says out-of-band changes "may" fail validation or be overwritten) because the `Validate*` / `Apply*` lanes are explicit and Postgres view validation is existence-only. Callers can supply any string.
 - **`DocPreamble`** — optional caller-controlled doc comment. Intended for purpose / contact / runbook links. **Not** treated as proof of ownership; it is metadata only.
 
-When both are set the rendered order is **`DocPreamble` first, then `OwnershipNotice`**, then the payload. Each non-empty field becomes a `/* ... */` SQL block comment followed by a single space. `Validate*WithOptions` strips this exact ordered prefix only; live text that begins with a different leading comment still reports drift.
+A third lane is **declaration-owned** and lives on the object itself:
+
+- **`ViewDef.WithDocAnnotation(text)` / `ProcedureDef.WithDocAnnotation(text)`** — per-object doc comment carried by the declaration. Unlike `DocPreamble` (which is shared across many objects and apply-owned), the annotation is part of the object's own declared identity: it renders into the live SQL **and** participates in body-drift comparison, so changing the text in code produces validation drift against a live object rendered from the prior annotation.
+
+```go
+v := schema.NewView("v_open_tasks",
+    "SELECT id FROM tasks WHERE done = 0").
+    WithDocAnnotation("v_open_tasks v1: returns currently-open task ids")
+```
+
+When all three are set the rendered order is **`DocPreamble`, then declaration-owned annotation, then `OwnershipNotice`**, then the payload. Each non-empty segment becomes a `/* ... */` SQL block comment followed by a single space. `Validate*WithOptions` strips the apply-owned segments (`DocPreamble` + `OwnershipNotice`) in their declared slots, retains the declaration-owned annotation in canonical comparison, and reports drift when the annotation in live SQL differs from the annotation in code. Live text that begins with a different leading comment still reports drift.
 
 Apply-owned tolerance, summarized:
 
@@ -628,6 +638,15 @@ Apply-owned tolerance, summarized:
 | Raw declared body + configured prefix (preamble + notice) | drift | pass |
 | Raw declared body + a different leading comment | drift | drift |
 | Raw declared body + stale configured prefix that no longer matches `opts` | drift | drift |
+
+Declaration-owned drift (per-object `WithDocAnnotation`):
+
+| Declared annotation vs. live annotation | `ValidateViewWithOptions(opts)` |
+| --- | --- |
+| Same text in code and live SQL | pass |
+| Annotation changed in code (live still has prior text) | drift |
+| Annotation added in code (live has no annotation) | drift |
+| Annotation removed in code (live still carries old annotation) | drift |
 
 Bare `ApplyView` / `ValidateView` / `ApplyProcedure` / `ValidateProcedure` are unchanged: they neither inject nor tolerate markers.
 

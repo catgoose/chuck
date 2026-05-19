@@ -41,25 +41,81 @@ func TestApplyOwnershipNoticePrefix(t *testing.T) {
 		assert.Equal(t, "SELECT 1", got)
 	})
 
-	t.Run("non-empty notice is prepended with single space separator", func(t *testing.T) {
+	t.Run("notice-only is prepended with single space separator", func(t *testing.T) {
 		got := applyOwnershipNoticePrefix("SELECT 1",
-			CodeObjectOptions{OwnershipNotice: "hello"})
-		assert.Equal(t, "/* hello */ SELECT 1", got)
+			CodeObjectOptions{OwnershipNotice: "owned"})
+		assert.Equal(t, "/* owned */ SELECT 1", got)
+	})
+
+	t.Run("doc-preamble-only is prepended with single space separator", func(t *testing.T) {
+		got := applyOwnershipNoticePrefix("SELECT 1",
+			CodeObjectOptions{DocPreamble: "doc"})
+		assert.Equal(t, "/* doc */ SELECT 1", got)
+	})
+
+	t.Run("both fields render in preamble-then-notice order", func(t *testing.T) {
+		got := applyOwnershipNoticePrefix("SELECT 1",
+			CodeObjectOptions{OwnershipNotice: "owned", DocPreamble: "doc"})
+		assert.Equal(t, "/* doc */ /* owned */ SELECT 1", got)
 	})
 
 	t.Run("proc-style payload (leading param) is preserved verbatim", func(t *testing.T) {
-		// Procedures put parameter declarations first, before AS; the comment
-		// must sit before the parameter list without corrupting it.
 		got := applyOwnershipNoticePrefix("@AgentID INT AS BEGIN SELECT 1 END",
 			CodeObjectOptions{OwnershipNotice: "owned"})
 		assert.Equal(t, "/* owned */ @AgentID INT AS BEGIN SELECT 1 END", got)
 	})
 }
 
+func TestStripConfiguredApplyPrefix(t *testing.T) {
+	t.Run("zero options leaves live unchanged", func(t *testing.T) {
+		assert.Equal(t, "SELECT 1",
+			stripConfiguredApplyPrefix("SELECT 1", CodeObjectOptions{}))
+	})
+
+	t.Run("exact configured notice is stripped", func(t *testing.T) {
+		got := stripConfiguredApplyPrefix("/* owned */ SELECT 1",
+			CodeObjectOptions{OwnershipNotice: "owned"})
+		assert.Equal(t, "SELECT 1", got)
+	})
+
+	t.Run("exact configured preamble is stripped", func(t *testing.T) {
+		got := stripConfiguredApplyPrefix("/* doc */ SELECT 1",
+			CodeObjectOptions{DocPreamble: "doc"})
+		assert.Equal(t, "SELECT 1", got)
+	})
+
+	t.Run("both prefixes strip in preamble-then-notice order", func(t *testing.T) {
+		got := stripConfiguredApplyPrefix("/* doc */ /* owned */ SELECT 1",
+			CodeObjectOptions{OwnershipNotice: "owned", DocPreamble: "doc"})
+		assert.Equal(t, "SELECT 1", got)
+	})
+
+	t.Run("different leading comment is NOT stripped", func(t *testing.T) {
+		// Live has an unconfigured leading comment. Strip must leave it
+		// in place so canonical compare reports drift.
+		got := stripConfiguredApplyPrefix("/* something else */ SELECT 1",
+			CodeObjectOptions{OwnershipNotice: "owned"})
+		assert.Equal(t, "/* something else */ SELECT 1", got)
+	})
+
+	t.Run("configured-but-absent notice tolerated", func(t *testing.T) {
+		// Live has no comment, options has notice. Strip is a no-op so
+		// canonical compare passes against raw declared body.
+		got := stripConfiguredApplyPrefix("SELECT 1",
+			CodeObjectOptions{OwnershipNotice: "owned"})
+		assert.Equal(t, "SELECT 1", got)
+	})
+
+	t.Run("wrong-order prefixes not both stripped", func(t *testing.T) {
+		// Live has notice before preamble (wrong order). Preamble strip
+		// fails, notice strip succeeds, leaving preamble in place.
+		got := stripConfiguredApplyPrefix("/* owned */ /* doc */ SELECT 1",
+			CodeObjectOptions{OwnershipNotice: "owned", DocPreamble: "doc"})
+		assert.Equal(t, "/* doc */ SELECT 1", got)
+	})
+}
+
 func TestApplyViewWithOptions_DefaultPathUnchanged(t *testing.T) {
-	// Regression guard: the zero CodeObjectOptions must produce the same DDL
-	// that ApplyView issued before this feature existed. We don't have a live
-	// DB here; we compare the rendered statement slice directly.
 	v := NewView("v_x", "SELECT 1")
 	d := chuck.SQLiteDialect{}
 	got := v.createOrReplaceWithBody(d, applyOwnershipNoticePrefix(v.Body(), CodeObjectOptions{}))
@@ -78,6 +134,18 @@ func TestApplyViewWithOptions_NoticeRendersIntoBody(t *testing.T) {
 	want := []string{
 		"DROP VIEW IF EXISTS \"v_x\"",
 		"CREATE VIEW \"v_x\" AS /* owned */ SELECT 1",
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestApplyViewWithOptions_DocPreambleAndNoticeRender(t *testing.T) {
+	v := NewView("v_x", "SELECT 1")
+	opts := CodeObjectOptions{OwnershipNotice: "owned", DocPreamble: "doc"}
+	got := v.createOrReplaceWithBody(chuck.SQLiteDialect{},
+		applyOwnershipNoticePrefix(v.Body(), opts))
+	want := []string{
+		"DROP VIEW IF EXISTS \"v_x\"",
+		"CREATE VIEW \"v_x\" AS /* doc */ /* owned */ SELECT 1",
 	}
 	assert.Equal(t, want, got)
 }
@@ -107,8 +175,6 @@ func TestApplyProcedureWithOptions_NoticeRendersIntoDefinition(t *testing.T) {
 }
 
 func TestApplyProcedureWithOptions_DefaultPathUnchanged(t *testing.T) {
-	// Regression guard: the zero CodeObjectOptions must produce the same DDL
-	// that ApplyProcedure issued before this feature existed.
 	p := NewProcedure("usp_X", "AS BEGIN SELECT 1 END")
 	definition := applyOwnershipNoticePrefix(p.Definition(), CodeObjectOptions{})
 	stmt, err := p.createOrAlterWithDefinition(chuck.MSSQLDialect{}, definition)
@@ -119,9 +185,6 @@ func TestApplyProcedureWithOptions_DefaultPathUnchanged(t *testing.T) {
 }
 
 func TestApplyProcedureWithOptions_UnsupportedDialectStillErrs(t *testing.T) {
-	// The options-aware path must keep the same engine guard: bootstrap on a
-	// non-MSSQL dialect must fail loud rather than silently emit a SQLite or
-	// Postgres procedure statement.
 	p := NewProcedure("usp_X", "AS BEGIN SELECT 1 END")
 	err := ApplyProcedureWithOptions(context.Background(), nil, chuck.PostgresDialect{},
 		CodeObjectOptions{OwnershipNotice: DefaultOwnershipNotice}, p)

@@ -49,7 +49,7 @@ func (SQLiteDialect) ReturningClause(columns string) string {
 func (SQLiteDialect) NormalizeIdentifier(name string) string { return name }
 
 func (SQLiteDialect) QuoteIdentifier(name string) string {
-	return `"` + name + `"`
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 func (SQLiteDialect) BigIntType() string  { return "INTEGER" }

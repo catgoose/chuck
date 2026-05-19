@@ -261,6 +261,9 @@ func TestSQLiteDialect(t *testing.T) {
 	t.Run("QuoteIdentifier", func(t *testing.T) {
 		assert.Equal(t, `"Users"`, d.QuoteIdentifier("Users"))
 		assert.Equal(t, `"order"`, d.QuoteIdentifier("order"))
+		// Embedded double quote must be doubled so the quoted identifier
+		// parses cleanly under SQL standard rules.
+		assert.Equal(t, `"a""b"`, d.QuoteIdentifier(`a"b`))
 	})
 
 	t.Run("LastInsertID", func(t *testing.T) {
@@ -368,6 +371,9 @@ func TestPostgresDialect(t *testing.T) {
 	t.Run("QuoteIdentifier", func(t *testing.T) {
 		assert.Equal(t, `"Users"`, d.QuoteIdentifier("Users"))
 		assert.Equal(t, `"order"`, d.QuoteIdentifier("order"))
+		// Embedded double quote must be doubled so the quoted identifier
+		// parses cleanly under SQL standard rules.
+		assert.Equal(t, `"a""b"`, d.QuoteIdentifier(`a"b`))
 	})
 
 	t.Run("LastInsertID", func(t *testing.T) {

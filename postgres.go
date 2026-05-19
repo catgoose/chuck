@@ -48,7 +48,7 @@ func (PostgresDialect) NormalizeIdentifier(name string) string {
 }
 
 func (PostgresDialect) QuoteIdentifier(name string) string {
-	return `"` + name + `"`
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 func (PostgresDialect) BigIntType() string  { return "BIGINT" }

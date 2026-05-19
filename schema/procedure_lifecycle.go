@@ -174,13 +174,12 @@ func ValidateProcedure(ctx context.Context, db *sql.DB, d chuck.Dialect, p *Proc
 }
 
 // ValidateProcedureWithOptions is the option-aware counterpart to
-// ValidateProcedure. Ownership decoration is apply-owned, not
-// declaration-owned: when opts.OwnershipNotice or opts.DocPreamble are
-// configured, the exact rendered prefix is stripped from the live
-// definition before canonical comparison. Live definitions that do not
-// carry the configured markers still validate cleanly against the same
-// declared definition; live definitions that carry a different leading
-// comment (including a stale notice) still report drift.
+// ValidateProcedure. Leading block comments are treated as documentation, not
+// executable procedure semantics: validation strips any leading block-comment
+// stack from both the declared definition and the live definition before
+// canonical comparison. This means ownership notices, doc preambles,
+// per-object annotations, and other leading `/* ... */` front matter do not
+// cause drift on their own.
 //
 // When the procedure declares prior names via WithReplaces, any of those
 // names still present in the live database surface as additional drift
@@ -217,8 +216,8 @@ func validateProcedureWithOptionsInternal(ctx context.Context, db *sql.DB, d chu
 			Reason:  "procedure does not exist",
 		})
 	} else {
-		liveStripped := stripConfiguredApplyPrefix(live, opts, p.DocAnnotation())
-		declaredCanon := canonicalizeStatement(declaredDefinitionWithAnnotation(p))
+		liveStripped := stripLeadingBlockComments(stripConfiguredApplyPrefix(live, opts, p.DocAnnotation()))
+		declaredCanon := canonicalizeStatement(stripLeadingBlockComments(p.Definition()))
 		liveCanon := canonicalizeStatement(liveStripped)
 		if declaredCanon != liveCanon {
 			drifts = append(drifts, ProcedureDrift{

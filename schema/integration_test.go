@@ -468,8 +468,8 @@ func TestProcedureValidateApply_MSSQL(t *testing.T) {
 //   - bare ApplyView strips the markers; validate-with-options against the
 //     bare live body is clean (apply-owned tolerance — markers are not
 //     required to exist live)
-//   - live body with a different leading comment still reports drift under
-//     validate-with-options
+//   - live body with a different leading comment still validates cleanly
+//     because comment-only front matter is ignored
 func TestViewValidateApplyWithOptions_SQLite_OwnershipNotice(t *testing.T) {
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err)
@@ -510,11 +510,9 @@ func TestViewValidateApplyWithOptions_SQLite_OwnershipNotice(t *testing.T) {
 	require.True(t, docIdx >= 0 && notIdx >= 0)
 	assert.Less(t, docIdx, notIdx, "DocPreamble must render before OwnershipNotice")
 
-	// Bare ValidateView (no opts) must see the live comments as body drift —
-	// raw declared body has no leading comment.
-	err = schema.ValidateView(ctx, db, d, v)
-	require.Error(t, err, "bare ValidateView must report drift when live body carries apply-only markers")
-	assert.ErrorIs(t, err, schema.ErrViewBodyDrift)
+	// Bare ValidateView (no opts) also passes: leading comment-only front
+	// matter is ignored during body comparison.
+	require.NoError(t, schema.ValidateView(ctx, db, d, v))
 
 	// Bare ApplyView strips the markers; validate-with-options against the
 	// bare live body must be clean — apply-owned tolerance lets validate
@@ -525,28 +523,27 @@ func TestViewValidateApplyWithOptions_SQLite_OwnershipNotice(t *testing.T) {
 	require.NoError(t, schema.ValidateViewWithOptions(ctx, db, d, opts, v),
 		"apply-owned: validate-with-options must tolerate live body without markers")
 
-	// Different leading comment must still report drift under validate-with-options.
+	// Different leading comment still validates: comment-only front matter
+	// does not participate in body drift.
 	_, err = db.ExecContext(ctx,
 		`DROP VIEW IF EXISTS v_vva_on_open; `+
 			`CREATE VIEW v_vva_on_open AS /* unexpected stale notice */ SELECT id FROM vva_on_tasks WHERE done = 0`)
 	require.NoError(t, err)
-	err = schema.ValidateViewWithOptions(ctx, db, d, opts, v)
-	require.Error(t, err, "validate-with-options must report drift when live body has a different leading comment")
-	assert.ErrorIs(t, err, schema.ErrViewBodyDrift)
+	require.NoError(t, schema.ValidateViewWithOptions(ctx, db, d, opts, v),
+		"validate-with-options must ignore comment-only front matter drift")
 }
 
-// TestViewValidateApplyWithOptions_SQLite_DocAnnotation asserts the
-// declaration-owned per-object doc annotation contract on SQLite.
+// TestViewValidateApplyWithOptions_SQLite_DocAnnotation asserts the per-object
+// doc annotation render contract on SQLite.
 //
 // Contract covered:
 //
 //   - apply + validate with the same declared annotation is coherent
 //   - the rendered annotation lands in sqlite_master.sql between the
 //     caller-level DocPreamble and the caller-level OwnershipNotice
-//   - changing the declared annotation in code produces validation drift
-//     against a live view rendered from the prior annotation
-//     (declaration-owned semantics, distinct from apply-owned DocPreamble)
-//   - the annotation also drives drift when used without any caller-level
+//   - changing the declared annotation in code does not produce validation
+//     drift because comment-only front matter is ignored
+//   - the same ignore-comments rule holds even without any caller-level
 //     decoration
 func TestViewValidateApplyWithOptions_SQLite_DocAnnotation(t *testing.T) {
 	db, err := sql.Open("sqlite3", ":memory:")
@@ -586,21 +583,17 @@ func TestViewValidateApplyWithOptions_SQLite_DocAnnotation(t *testing.T) {
 	assert.Less(t, docIdx, annIdx, "DocPreamble must render before doc annotation")
 	assert.Less(t, annIdx, notIdx, "doc annotation must render before OwnershipNotice")
 
-	// Declaration-owned drift: change the annotation in code and validate
-	// must complain even though the live SQL still carries the prior
-	// annotation that was apply-rendered.
+	// Change annotation text in code. Validation still passes because
+	// leading comments are documentation, not executable view semantics.
 	vDrifted := schema.NewView("v_vva_da_open", "SELECT id FROM vva_da_tasks WHERE done = 0").
 		WithDocAnnotation("v_vva_da_open v2: SEMANTIC CHANGE — please review caller")
-	err = schema.ValidateViewWithOptions(ctx, db, d, opts, vDrifted)
-	require.Error(t, err, "declared annotation change must surface as body drift")
-	assert.ErrorIs(t, err, schema.ErrViewBodyDrift)
+	require.NoError(t, schema.ValidateViewWithOptions(ctx, db, d, opts, vDrifted),
+		"declared annotation change must not surface as body drift")
 
-	// Annotation alone (no caller-level options) still drives drift when
-	// declared annotation disagrees with live.
+	// Same for annotation-only rendering with no caller-level options.
 	require.NoError(t, schema.ApplyViewWithOptions(ctx, db, d, schema.CodeObjectOptions{}, v))
-	err = schema.ValidateViewWithOptions(ctx, db, d, schema.CodeObjectOptions{}, vDrifted)
-	require.Error(t, err, "annotation-only declaration must drive drift on its own")
-	assert.ErrorIs(t, err, schema.ErrViewBodyDrift)
+	require.NoError(t, schema.ValidateViewWithOptions(ctx, db, d, schema.CodeObjectOptions{}, vDrifted),
+		"annotation-only declaration must not drive drift on its own")
 
 	// Same declaration as live still validates clean under annotation-only.
 	require.NoError(t, schema.ValidateViewWithOptions(ctx, db, d, schema.CodeObjectOptions{}, v))
@@ -737,10 +730,9 @@ func TestProcedureValidateApplyWithOptions_MSSQL(t *testing.T) {
 	require.Contains(t, live, "may fail validation or be overwritten")
 	require.Contains(t, live, "probe procedure for VVA notice contract")
 
-	// Bare ValidateProcedure (no opts) must see the live markers as drift.
-	err = schema.ValidateProcedure(ctx, db, d, proc)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, schema.ErrProcedureDefinitionDrift)
+	// Bare ValidateProcedure (no opts) also passes: leading comments do not
+	// participate in executable-definition drift.
+	require.NoError(t, schema.ValidateProcedure(ctx, db, d, proc))
 
 	// Bare ApplyProcedure strips the markers; validate-with-options against
 	// the bare live definition must be clean — apply-owned tolerance.

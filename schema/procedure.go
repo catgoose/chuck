@@ -80,13 +80,13 @@ func (p *ProcedureDef) Schema() string {
 	return p.schema
 }
 
-// WithDocAnnotation attaches a declaration-owned doc comment to the procedure.
+// WithDocAnnotation attaches a per-procedure doc comment to the declaration.
 // When set, the annotation renders as a SQL block comment as part of the
-// procedure's own SQL output (between any caller-level DocPreamble and any
-// caller-level OwnershipNotice) and participates in definition-drift
-// comparison: changing the annotation in code produces validation drift
-// against a live procedure rendered from the prior annotation. This is the
-// per-object counterpart to CodeObjectOptions.DocPreamble.
+// procedure's live SQL output (between any caller-level DocPreamble and any
+// caller-level OwnershipNotice). Validation intentionally ignores leading
+// block-comment front matter, so changing this annotation does not by itself
+// produce drift. This is the per-object counterpart to
+// CodeObjectOptions.DocPreamble.
 func (p *ProcedureDef) WithDocAnnotation(text string) *ProcedureDef {
 	p.docAnnotation = text
 	return p
@@ -172,7 +172,7 @@ func (p *ProcedureDef) createOrAlterWithDefinition(d chuck.Dialect, definition s
 	if d.Engine() != chuck.MSSQL {
 		return "", fmt.Errorf("%w: %s", ErrProcedureDialectUnsupported, d.Engine())
 	}
-	return fmt.Sprintf("CREATE OR ALTER PROCEDURE %s %s", p.QualifiedNameFor(d), definition), nil
+	return joinSQLHeadPayload(fmt.Sprintf("CREATE OR ALTER PROCEDURE %s", p.QualifiedNameFor(d)), definition), nil
 }
 
 // DropSQL returns a single safe `DROP PROCEDURE` statement that probes

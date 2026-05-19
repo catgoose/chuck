@@ -207,6 +207,125 @@ func TestViewDriftError_Unwrap_Mixed_SkippedAndMissing_NoWrap(t *testing.T) {
 	assert.False(t, errors.Is(e, ErrViewBodyComparisonUnsupported))
 }
 
+func TestApplyView_SQLite_DropsReplacedViews(t *testing.T) {
+	// ApplyView with WithReplaces must drop each listed prior name before
+	// creating the current view, so a rename rollout retires the old view
+	// without leaving it behind.
+	ctx, db, d := openSQLiteForViewLifecycle(t)
+	defer db.Close()
+
+	mustExec(t, db, `CREATE TABLE t (id INTEGER PRIMARY KEY)`)
+	mustExec(t, db, `CREATE VIEW v_old AS SELECT id FROM t`)
+
+	v := NewView("v_new", "SELECT id FROM t").
+		WithReplaces(chuck.ObjectName{Name: "v_old"})
+
+	require.NoError(t, ApplyView(ctx, db, d, v))
+
+	var oldCount int
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='view' AND name='v_old'`).
+		Scan(&oldCount))
+	assert.Equal(t, 0, oldCount, "v_old must be dropped by WithReplaces apply")
+
+	require.NoError(t, ValidateView(ctx, db, d, v))
+}
+
+func TestApplyViews_SQLite_DedupesReplacementDrops(t *testing.T) {
+	// Multiple defs naming the same prior name must only drop it once
+	// across the batch, not once per def.
+	ctx, db, d := openSQLiteForViewLifecycle(t)
+	defer db.Close()
+
+	mustExec(t, db, `CREATE TABLE t (id INTEGER PRIMARY KEY)`)
+	mustExec(t, db, `CREATE VIEW v_old AS SELECT id FROM t`)
+
+	a := NewView("v_a", "SELECT id FROM t").
+		WithReplaces(chuck.ObjectName{Name: "v_old"})
+	b := NewView("v_b", "SELECT id FROM t").
+		WithReplaces(chuck.ObjectName{Name: "v_old"})
+
+	require.NoError(t, ApplyViews(ctx, db, d, a, b))
+
+	var oldCount int
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='view' AND name='v_old'`).
+		Scan(&oldCount))
+	assert.Equal(t, 0, oldCount, "v_old must be dropped exactly once across batch")
+}
+
+func TestValidateView_SQLite_StaleReplacementReportsDrift(t *testing.T) {
+	// When a declared replacement still exists in the live DB, validate must
+	// surface it as drift with ReplacementStale=true and unwrap to
+	// ErrViewReplacementStillExists when it is the sole drift cause.
+	ctx, db, d := openSQLiteForViewLifecycle(t)
+	defer db.Close()
+
+	mustExec(t, db, `CREATE TABLE t (id INTEGER PRIMARY KEY)`)
+	v := NewView("v_new", "SELECT id FROM t").
+		WithReplaces(chuck.ObjectName{Name: "v_old"})
+	require.NoError(t, ApplyView(ctx, db, d, v))
+
+	// Re-create the prior name out of band — apply already dropped it.
+	mustExec(t, db, `CREATE VIEW v_old AS SELECT id FROM t`)
+
+	err := ValidateView(ctx, db, d, v)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrViewReplacementStillExists))
+	var drift *ViewDriftError
+	require.ErrorAs(t, err, &drift)
+	require.Len(t, drift.Drifts, 1)
+	assert.True(t, drift.Drifts[0].ReplacementStale)
+	assert.Equal(t, "v_old", drift.Drifts[0].Object.Name)
+}
+
+func TestValidateViews_SQLite_DedupesReplacementChecks(t *testing.T) {
+	// Multiple defs naming the same prior name must only flag it once in
+	// the aggregated drift error, even though both defs list it.
+	ctx, db, d := openSQLiteForViewLifecycle(t)
+	defer db.Close()
+
+	mustExec(t, db, `CREATE TABLE t (id INTEGER PRIMARY KEY)`)
+	mustExec(t, db, `CREATE VIEW v_old AS SELECT id FROM t`)
+	a := NewView("v_a", "SELECT id FROM t").
+		WithReplaces(chuck.ObjectName{Name: "v_old"})
+	b := NewView("v_b", "SELECT id FROM t").
+		WithReplaces(chuck.ObjectName{Name: "v_old"})
+	require.NoError(t, ApplyView(ctx, db, d, a))
+	require.NoError(t, ApplyView(ctx, db, d, b))
+	// Re-create v_old after apply to simulate a stale prior name.
+	mustExec(t, db, `CREATE VIEW v_old AS SELECT id FROM t`)
+
+	err := ValidateViews(ctx, db, d, a, b)
+	require.Error(t, err)
+	var drift *ViewDriftError
+	require.ErrorAs(t, err, &drift)
+	require.Len(t, drift.Drifts, 1, "v_old must be deduped to one drift entry across the batch")
+	assert.True(t, drift.Drifts[0].ReplacementStale)
+}
+
+func TestValidateView_SQLite_NoReplacementClean(t *testing.T) {
+	// When the declared replacement does not exist live, validate is clean.
+	ctx, db, d := openSQLiteForViewLifecycle(t)
+	defer db.Close()
+
+	mustExec(t, db, `CREATE TABLE t (id INTEGER PRIMARY KEY)`)
+	v := NewView("v_new", "SELECT id FROM t").
+		WithReplaces(chuck.ObjectName{Name: "v_old"})
+	require.NoError(t, ApplyView(ctx, db, d, v))
+	require.NoError(t, ValidateView(ctx, db, d, v))
+}
+
+func TestViewDriftError_Unwrap_AllReplacementStale(t *testing.T) {
+	e := &ViewDriftError{Drifts: []ViewDrift{
+		{Object: chuck.ObjectName{Name: "v_old_a"}, ReplacementStale: true},
+		{Object: chuck.ObjectName{Name: "v_old_b"}, ReplacementStale: true},
+	}}
+	assert.True(t, errors.Is(e, ErrViewReplacementStillExists))
+	assert.False(t, errors.Is(e, ErrViewMissing))
+	assert.False(t, errors.Is(e, ErrViewBodyDrift))
+}
+
 func TestApplyViews_SQLite_OrderRespected(t *testing.T) {
 	ctx, db, d := openSQLiteForViewLifecycle(t)
 	defer db.Close()

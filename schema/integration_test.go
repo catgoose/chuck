@@ -606,6 +606,92 @@ func TestViewValidateApplyWithOptions_SQLite_DocAnnotation(t *testing.T) {
 	require.NoError(t, schema.ValidateViewWithOptions(ctx, db, d, schema.CodeObjectOptions{}, v))
 }
 
+// TestViewRenameRollout_SQLite_WithReplaces asserts the rename/tombstone
+// contract end-to-end on SQLite, which stores view definitions verbatim and
+// lets us observe both apply-side drops and validate-side stale-replacement
+// drift directly via sqlite_master.
+//
+// Contract covered:
+//
+//   - apply drops each WithReplaces name before creating the current view
+//   - validate is clean after apply when no prior name remains live
+//   - re-creating a prior name out of band surfaces as stale-replacement
+//     drift that unwraps to ErrViewReplacementStillExists
+//   - batch apply / validate dedupe duplicate replacement names across defs
+func TestViewRenameRollout_SQLite_WithReplaces(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx := context.Background()
+	d := chuck.SQLiteDialect{}
+
+	_, err = db.ExecContext(ctx, `CREATE TABLE rn_tasks (id INTEGER PRIMARY KEY, done INTEGER)`)
+	require.NoError(t, err)
+	defer func() { _, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS rn_tasks`) }()
+
+	// Seed the prior name as if a previous rollout had created it.
+	_, err = db.ExecContext(ctx,
+		`CREATE VIEW v_rn_open_v1 AS SELECT id FROM rn_tasks WHERE done = 0`)
+	require.NoError(t, err)
+
+	v := schema.NewView("v_rn_open", "SELECT id FROM rn_tasks WHERE done = 0").
+		WithReplaces(chuck.ObjectName{Name: "v_rn_open_v1"})
+	defer func() { _, _ = db.ExecContext(ctx, v.DropSQL(d)) }()
+
+	require.NoError(t, schema.ApplyView(ctx, db, d, v))
+
+	var oldCount int
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='view' AND name=?`,
+		"v_rn_open_v1").Scan(&oldCount))
+	assert.Equal(t, 0, oldCount, "prior name must be dropped after rollout apply")
+
+	require.NoError(t, schema.ValidateView(ctx, db, d, v),
+		"validate must be clean once the prior name is retired")
+
+	// Simulate an out-of-band resurrection of the prior name (e.g. a
+	// rollback patch or hand-edit). Validate must now flag stale
+	// replacement and unwrap to ErrViewReplacementStillExists.
+	_, err = db.ExecContext(ctx,
+		`CREATE VIEW v_rn_open_v1 AS SELECT id FROM rn_tasks WHERE done = 0`)
+	require.NoError(t, err)
+
+	err = schema.ValidateView(ctx, db, d, v)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, schema.ErrViewReplacementStillExists)
+
+	// Batch dedup: two defs naming the same prior name must report it once.
+	a := schema.NewView("v_rn_a", "SELECT id FROM rn_tasks").
+		WithReplaces(chuck.ObjectName{Name: "v_rn_open_v1"})
+	b := schema.NewView("v_rn_b", "SELECT id FROM rn_tasks").
+		WithReplaces(chuck.ObjectName{Name: "v_rn_open_v1"})
+	defer func() {
+		_, _ = db.ExecContext(ctx, a.DropSQL(d))
+		_, _ = db.ExecContext(ctx, b.DropSQL(d))
+	}()
+	require.NoError(t, schema.ApplyViews(ctx, db, d, a, b))
+
+	// Re-seed the prior name to test validate dedup specifically.
+	_, err = db.ExecContext(ctx,
+		`CREATE VIEW v_rn_open_v1 AS SELECT id FROM rn_tasks WHERE done = 0`)
+	require.NoError(t, err)
+
+	err = schema.ValidateViews(ctx, db, d, a, b)
+	require.Error(t, err)
+	var drift *schema.ViewDriftError
+	require.ErrorAs(t, err, &drift)
+	// One drift entry for v_rn_open_v1, deduped across the two defs.
+	staleCount := 0
+	for _, dr := range drift.Drifts {
+		if dr.ReplacementStale && dr.Object.Name == "v_rn_open_v1" {
+			staleCount++
+		}
+	}
+	assert.Equal(t, 1, staleCount,
+		"v_rn_open_v1 must be deduped to one drift entry across the batch")
+}
+
 // TestProcedureValidateApplyWithOptions_MSSQL gates on a live MSSQL instance
 // because MSSQL is the only engine with first-class procedure ownership in
 // this release. Proves apply-with-options + validate-with-same-options is

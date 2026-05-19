@@ -28,6 +28,7 @@ type ViewDef struct {
 	schema        string
 	body          string
 	docAnnotation string
+	replaces      []chuck.ObjectName
 }
 
 // NewView creates an unqualified owned view with the given name and SELECT
@@ -73,6 +74,29 @@ func (v *ViewDef) WithDocAnnotation(text string) *ViewDef {
 // view, or "" if none.
 func (v *ViewDef) DocAnnotation() string {
 	return v.docAnnotation
+}
+
+// WithReplaces declares prior names this view supersedes — used to retire
+// renamed or replaced views explicitly without schema-wide pruning.
+// Apply*WithOptions drops each listed name (exact schema + name match, same
+// object type) before creating the current view; Validate*WithOptions reports
+// each listed name as stale if it still exists in the live database. Cross-
+// type replacement (e.g. a view replacing a procedure) is intentionally not
+// supported.
+//
+// Multiple calls accumulate; batch apply / validate helpers dedupe duplicate
+// names across the batch so the same prior name is only dropped or checked
+// once. Names are matched by structured ObjectName: schema and name must
+// match exactly, with no schema-wide globbing.
+func (v *ViewDef) WithReplaces(names ...chuck.ObjectName) *ViewDef {
+	v.replaces = append(v.replaces, names...)
+	return v
+}
+
+// Replaces returns the declared prior names this view supersedes, in
+// caller-supplied order.
+func (v *ViewDef) Replaces() []chuck.ObjectName {
+	return v.replaces
 }
 
 // Body returns the raw SELECT body declared for the view.

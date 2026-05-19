@@ -20,6 +20,12 @@ var ErrProcedureMissing = errors.New("schema: declared procedure does not exist 
 // definition differs from the declaration.
 var ErrProcedureDefinitionDrift = errors.New("schema: declared procedure definition differs from live database definition")
 
+// ErrProcedureReplacementStillExists is returned by ValidateProcedure /
+// ValidateProcedures when a name declared via ProcedureDef.WithReplaces still
+// exists in the live database. Callers can errors.Is-detect this to
+// distinguish "old name not yet retired" from current-object drift.
+var ErrProcedureReplacementStillExists = errors.New("schema: declared replaced procedure still exists in live database")
+
 // ProcedureDrift describes one declared procedure whose state in the live
 // database does not match the declared definition. Either Missing is true,
 // or DefinitionMismatch is true with DeclaredDefinition / LiveDefinition
@@ -28,6 +34,11 @@ type ProcedureDrift struct {
 	Object             chuck.ObjectName
 	Missing            bool
 	DefinitionMismatch bool
+	// ReplacementStale is true when Object names a prior procedure declared
+	// via ProcedureDef.WithReplaces that still exists in the live database.
+	// The current procedure may still match; the drift flags a rename
+	// rollout that has not finished cleaning up the prior name.
+	ReplacementStale   bool
 	DeclaredDefinition string
 	LiveDefinition     string
 	Reason             string
@@ -49,6 +60,8 @@ func (e *ProcedureDriftError) Error() string {
 		switch {
 		case d.Missing:
 			parts = append(parts, fmt.Sprintf("procedure %q: missing", obj))
+		case d.ReplacementStale:
+			parts = append(parts, fmt.Sprintf("procedure %q: replacement still exists", obj))
 		case d.DefinitionMismatch:
 			parts = append(parts, fmt.Sprintf("procedure %q: definition drift", obj))
 		default:
@@ -64,6 +77,7 @@ func (e *ProcedureDriftError) Unwrap() error {
 	}
 	onlyMissing := true
 	onlyDefn := true
+	onlyReplStale := true
 	for _, d := range e.Drifts {
 		if !d.Missing {
 			onlyMissing = false
@@ -71,12 +85,17 @@ func (e *ProcedureDriftError) Unwrap() error {
 		if !d.DefinitionMismatch {
 			onlyDefn = false
 		}
+		if !d.ReplacementStale {
+			onlyReplStale = false
+		}
 	}
 	switch {
 	case onlyMissing:
 		return ErrProcedureMissing
 	case onlyDefn:
 		return ErrProcedureDefinitionDrift
+	case onlyReplStale:
+		return ErrProcedureReplacementStillExists
 	default:
 		return nil
 	}
@@ -162,34 +181,78 @@ func ValidateProcedure(ctx context.Context, db *sql.DB, d chuck.Dialect, p *Proc
 // carry the configured markers still validate cleanly against the same
 // declared definition; live definitions that carry a different leading
 // comment (including a stale notice) still report drift.
+//
+// When the procedure declares prior names via WithReplaces, any of those
+// names still present in the live database surface as additional drift
+// entries (ReplacementStale=true), so a rename rollout that has not
+// finished cleaning up old names fails validation explicitly.
 func ValidateProcedureWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, p *ProcedureDef) error {
 	if d.Engine() != chuck.MSSQL {
 		return fmt.Errorf("%w: %s", ErrProcedureDialectUnsupported, d.Engine())
 	}
-	live, exists, err := LiveProcedureDefinition(ctx, db, d, p)
+	drifts, err := validateProcedureWithOptionsInternal(ctx, db, d, opts, p, nil)
 	if err != nil {
 		return err
 	}
+	if len(drifts) == 0 {
+		return nil
+	}
+	return &ProcedureDriftError{Drifts: drifts}
+}
+
+// validateProcedureWithOptionsInternal performs the per-procedure validate
+// work and returns drifts in caller-supplied order. When checked != nil,
+// replacement names are recorded as they are queried so a batch validator
+// can dedupe repeated names across multiple defs.
+func validateProcedureWithOptionsInternal(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, p *ProcedureDef, checked map[string]struct{}) ([]ProcedureDrift, error) {
+	var drifts []ProcedureDrift
+	live, exists, err := LiveProcedureDefinition(ctx, db, d, p)
+	if err != nil {
+		return nil, err
+	}
 	if !exists {
-		return &ProcedureDriftError{Drifts: []ProcedureDrift{{
+		drifts = append(drifts, ProcedureDrift{
 			Object:  p.Object(),
 			Missing: true,
 			Reason:  "procedure does not exist",
-		}}}
+		})
+	} else {
+		liveStripped := stripConfiguredApplyPrefix(live, opts, p.DocAnnotation())
+		declaredCanon := canonicalizeStatement(declaredDefinitionWithAnnotation(p))
+		liveCanon := canonicalizeStatement(liveStripped)
+		if declaredCanon != liveCanon {
+			drifts = append(drifts, ProcedureDrift{
+				Object:             p.Object(),
+				DefinitionMismatch: true,
+				DeclaredDefinition: declaredCanon,
+				LiveDefinition:     liveCanon,
+				Reason:             "procedure definition differs after canonical normalization",
+			})
+		}
 	}
-	liveStripped := stripConfiguredApplyPrefix(live, opts, p.DocAnnotation())
-	declaredCanon := canonicalizeStatement(declaredDefinitionWithAnnotation(p))
-	liveCanon := canonicalizeStatement(liveStripped)
-	if declaredCanon == liveCanon {
-		return nil
+	for _, repl := range p.Replaces() {
+		key := objectKey(repl)
+		if checked != nil {
+			if _, ok := checked[key]; ok {
+				continue
+			}
+			checked[key] = struct{}{}
+		}
+		tmp := &ProcedureDef{Name: repl.Name, schema: repl.Schema}
+		liveDef, replExists, err := LiveProcedureDefinition(ctx, db, d, tmp)
+		if err != nil {
+			return nil, err
+		}
+		if replExists {
+			drifts = append(drifts, ProcedureDrift{
+				Object:           repl,
+				ReplacementStale: true,
+				LiveDefinition:   liveDef,
+				Reason:           "procedure declared as replaced but still exists in live database",
+			})
+		}
 	}
-	return &ProcedureDriftError{Drifts: []ProcedureDrift{{
-		Object:             p.Object(),
-		DefinitionMismatch: true,
-		DeclaredDefinition: declaredCanon,
-		LiveDefinition:     liveCanon,
-		Reason:             "procedure definition differs after canonical normalization",
-	}}}
+	return drifts, nil
 }
 
 // ValidateProcedures validates each declared procedure in order, aggregating
@@ -202,22 +265,21 @@ func ValidateProcedures(ctx context.Context, db *sql.DB, d chuck.Dialect, procs 
 // ValidateProceduresWithOptions is the option-aware counterpart to
 // ValidateProcedures. See ValidateProcedureWithOptions for the per-procedure
 // semantics; aggregation behavior is identical to ValidateProcedures.
+// Replacement-name checks are deduped across the batch so the same prior
+// name only surfaces once even if it is declared via WithReplaces on
+// multiple defs.
 func ValidateProceduresWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, procs ...*ProcedureDef) error {
 	if d.Engine() != chuck.MSSQL {
 		return fmt.Errorf("%w: %s", ErrProcedureDialectUnsupported, d.Engine())
 	}
+	checked := map[string]struct{}{}
 	var drifts []ProcedureDrift
 	for _, p := range procs {
-		err := ValidateProcedureWithOptions(ctx, db, d, opts, p)
-		if err == nil {
-			continue
+		ds, err := validateProcedureWithOptionsInternal(ctx, db, d, opts, p, checked)
+		if err != nil {
+			return err
 		}
-		var drift *ProcedureDriftError
-		if errors.As(err, &drift) {
-			drifts = append(drifts, drift.Drifts...)
-			continue
-		}
-		return err
+		drifts = append(drifts, ds...)
 	}
 	if len(drifts) == 0 {
 		return nil
@@ -249,7 +311,40 @@ func ApplyProcedure(ctx context.Context, db *sql.DB, d chuck.Dialect, p *Procedu
 // token of the caller's definition payload. Callers that use this path
 // should pair it with ValidateProcedureWithOptions (same opts) to keep apply
 // and validate coherent.
+//
+// When the procedure declares prior names via WithReplaces, each listed
+// name is dropped (same guarded sys.procedures DROP IF EXISTS pattern as a
+// regular procedure drop) before the current procedure is created.
+// Cross-type drops are not attempted.
 func ApplyProcedureWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, p *ProcedureDef) error {
+	return applyProcedureWithOptionsInternal(ctx, db, d, opts, p, nil)
+}
+
+// applyProcedureWithOptionsInternal performs the per-procedure apply work.
+// When dropped != nil, replacement names already dropped earlier in the
+// batch are skipped so the same prior name is only dropped once across a
+// batch.
+func applyProcedureWithOptionsInternal(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, p *ProcedureDef, dropped map[string]struct{}) error {
+	if d.Engine() != chuck.MSSQL {
+		return fmt.Errorf("%w: %s", ErrProcedureDialectUnsupported, d.Engine())
+	}
+	for _, repl := range p.Replaces() {
+		key := objectKey(repl)
+		if dropped != nil {
+			if _, ok := dropped[key]; ok {
+				continue
+			}
+			dropped[key] = struct{}{}
+		}
+		tmp := &ProcedureDef{Name: repl.Name, schema: repl.Schema}
+		dropStmt, err := tmp.DropSQL(d)
+		if err != nil {
+			return err
+		}
+		if _, err := db.ExecContext(ctx, dropStmt); err != nil {
+			return fmt.Errorf("schema: drop replaced procedure %q: %w", key, err)
+		}
+	}
 	definition := applyOwnershipNoticePrefix(p.Definition(), opts, p.DocAnnotation())
 	stmt, err := p.createOrAlterWithDefinition(d, definition)
 	if err != nil {
@@ -268,13 +363,16 @@ func ApplyProcedures(ctx context.Context, db *sql.DB, d chuck.Dialect, procs ...
 }
 
 // ApplyProceduresWithOptions is the option-aware counterpart to
-// ApplyProcedures.
+// ApplyProcedures. Replacement-name drops are deduped across the batch so
+// the same prior name is only issued one DROP statement even if it is
+// declared via WithReplaces on multiple defs.
 func ApplyProceduresWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, procs ...*ProcedureDef) error {
 	if d.Engine() != chuck.MSSQL {
 		return fmt.Errorf("%w: %s", ErrProcedureDialectUnsupported, d.Engine())
 	}
+	dropped := map[string]struct{}{}
 	for _, p := range procs {
-		if err := ApplyProcedureWithOptions(ctx, db, d, opts, p); err != nil {
+		if err := applyProcedureWithOptionsInternal(ctx, db, d, opts, p, dropped); err != nil {
 			return err
 		}
 	}

@@ -41,45 +41,45 @@ func TestApplyOwnershipNoticePrefix(t *testing.T) {
 		assert.Equal(t, "SELECT 1", got)
 	})
 
-	t.Run("notice-only is prepended with single space separator", func(t *testing.T) {
+	t.Run("notice-only is prepended on its own line", func(t *testing.T) {
 		got := applyOwnershipNoticePrefix("SELECT 1",
 			CodeObjectOptions{OwnershipNotice: "owned"}, "")
-		assert.Equal(t, "/* owned */ SELECT 1", got)
+		assert.Equal(t, "\n/* owned */\nSELECT 1", got)
 	})
 
-	t.Run("doc-preamble-only is prepended with single space separator", func(t *testing.T) {
+	t.Run("doc-preamble-only is prepended on its own line", func(t *testing.T) {
 		got := applyOwnershipNoticePrefix("SELECT 1",
 			CodeObjectOptions{DocPreamble: "doc"}, "")
-		assert.Equal(t, "/* doc */ SELECT 1", got)
+		assert.Equal(t, "\n/* doc */\nSELECT 1", got)
 	})
 
 	t.Run("both fields render in preamble-then-notice order", func(t *testing.T) {
 		got := applyOwnershipNoticePrefix("SELECT 1",
 			CodeObjectOptions{OwnershipNotice: "owned", DocPreamble: "doc"}, "")
-		assert.Equal(t, "/* doc */ /* owned */ SELECT 1", got)
+		assert.Equal(t, "\n/* doc */\n\n/* owned */\nSELECT 1", got)
 	})
 
 	t.Run("proc-style payload (leading param) is preserved verbatim", func(t *testing.T) {
 		got := applyOwnershipNoticePrefix("@AgentID INT AS BEGIN SELECT 1 END",
 			CodeObjectOptions{OwnershipNotice: "owned"}, "")
-		assert.Equal(t, "/* owned */ @AgentID INT AS BEGIN SELECT 1 END", got)
+		assert.Equal(t, "\n/* owned */\n@AgentID INT AS BEGIN SELECT 1 END", got)
 	})
 
 	t.Run("declared annotation alone is prepended", func(t *testing.T) {
 		got := applyOwnershipNoticePrefix("SELECT 1", CodeObjectOptions{}, "ann")
-		assert.Equal(t, "/* ann */ SELECT 1", got)
+		assert.Equal(t, "\n/* ann */\nSELECT 1", got)
 	})
 
 	t.Run("annotation renders between DocPreamble and OwnershipNotice", func(t *testing.T) {
 		got := applyOwnershipNoticePrefix("SELECT 1",
 			CodeObjectOptions{OwnershipNotice: "owned", DocPreamble: "doc"}, "ann")
-		assert.Equal(t, "/* doc */ /* ann */ /* owned */ SELECT 1", got)
+		assert.Equal(t, "\n/* doc */\n\n/* ann */\n\n/* owned */\nSELECT 1", got)
 	})
 
 	t.Run("annotation + notice (no preamble)", func(t *testing.T) {
 		got := applyOwnershipNoticePrefix("SELECT 1",
 			CodeObjectOptions{OwnershipNotice: "owned"}, "ann")
-		assert.Equal(t, "/* ann */ /* owned */ SELECT 1", got)
+		assert.Equal(t, "\n/* ann */\n\n/* owned */\nSELECT 1", got)
 	})
 }
 
@@ -144,16 +144,13 @@ func TestStripConfiguredApplyPrefix(t *testing.T) {
 		assert.Equal(t, "/* ann */ SELECT 1", got)
 	})
 
-	t.Run("declared annotation missing in live yields drift signal", func(t *testing.T) {
-		// Live lacks the declared annotation entirely. Strip leaves the
-		// payload alone so canonical compare against
-		// `annotation + body` reports drift.
+	t.Run("declared annotation missing in live leaves payload untouched", func(t *testing.T) {
 		got := stripConfiguredApplyPrefix("SELECT 1",
 			CodeObjectOptions{}, "ann")
 		assert.Equal(t, "SELECT 1", got)
 	})
 
-	t.Run("declared annotation mismatched in live yields drift signal", func(t *testing.T) {
+	t.Run("declared annotation mismatched in live is left in place", func(t *testing.T) {
 		// Live carries a different annotation comment in the annotation
 		// slot; strip leaves it in place (not matching the declared
 		// annotation) and OwnershipNotice strip cannot proceed past it.
@@ -182,7 +179,7 @@ func TestApplyViewWithOptions_NoticeRendersIntoBody(t *testing.T) {
 		applyOwnershipNoticePrefix(v.Body(), opts, v.DocAnnotation()))
 	want := []string{
 		"DROP VIEW IF EXISTS \"v_x\"",
-		"CREATE VIEW \"v_x\" AS /* owned */ SELECT 1",
+		"CREATE VIEW \"v_x\" AS\n/* owned */\nSELECT 1",
 	}
 	assert.Equal(t, want, got)
 }
@@ -194,7 +191,7 @@ func TestApplyViewWithOptions_DocPreambleAndNoticeRender(t *testing.T) {
 		applyOwnershipNoticePrefix(v.Body(), opts, v.DocAnnotation()))
 	want := []string{
 		"DROP VIEW IF EXISTS \"v_x\"",
-		"CREATE VIEW \"v_x\" AS /* doc */ /* owned */ SELECT 1",
+		"CREATE VIEW \"v_x\" AS\n/* doc */\n\n/* owned */\nSELECT 1",
 	}
 	assert.Equal(t, want, got)
 }
@@ -205,10 +202,10 @@ func TestApplyViewWithOptions_NoticeRendersForMSSQLAndPostgres(t *testing.T) {
 	body := applyOwnershipNoticePrefix(v.Body(), opts, v.DocAnnotation())
 
 	mssql := v.createOrReplaceWithBody(chuck.MSSQLDialect{}, body)
-	assert.Equal(t, []string{"CREATE OR ALTER VIEW [sg].[v_x] AS /* owned */ SELECT 1"}, mssql)
+	assert.Equal(t, []string{"CREATE OR ALTER VIEW [sg].[v_x] AS\n/* owned */\nSELECT 1"}, mssql)
 
 	pg := v.createOrReplaceWithBody(chuck.PostgresDialect{}, body)
-	assert.Equal(t, []string{`CREATE OR REPLACE VIEW "sg"."v_x" AS /* owned */ SELECT 1`}, pg)
+	assert.Equal(t, []string{"CREATE OR REPLACE VIEW \"sg\".\"v_x\" AS\n/* owned */\nSELECT 1"}, pg)
 }
 
 func TestApplyViewWithOptions_DocAnnotationRendersBetweenPreambleAndNotice(t *testing.T) {
@@ -218,7 +215,7 @@ func TestApplyViewWithOptions_DocAnnotationRendersBetweenPreambleAndNotice(t *te
 		applyOwnershipNoticePrefix(v.Body(), opts, v.DocAnnotation()))
 	want := []string{
 		"DROP VIEW IF EXISTS \"v_x\"",
-		"CREATE VIEW \"v_x\" AS /* doc */ /* ann */ /* owned */ SELECT 1",
+		"CREATE VIEW \"v_x\" AS\n/* doc */\n\n/* ann */\n\n/* owned */\nSELECT 1",
 	}
 	assert.Equal(t, want, got)
 }
@@ -229,7 +226,7 @@ func TestApplyViewWithOptions_DocAnnotationAlone(t *testing.T) {
 		applyOwnershipNoticePrefix(v.Body(), CodeObjectOptions{}, v.DocAnnotation()))
 	want := []string{
 		"DROP VIEW IF EXISTS \"v_x\"",
-		"CREATE VIEW \"v_x\" AS /* ann */ SELECT 1",
+		"CREATE VIEW \"v_x\" AS\n/* ann */\nSELECT 1",
 	}
 	assert.Equal(t, want, got)
 }
@@ -242,7 +239,7 @@ func TestApplyProcedureWithOptions_NoticeRendersIntoDefinition(t *testing.T) {
 	stmt, err := p.createOrAlterWithDefinition(chuck.MSSQLDialect{}, definition)
 	require.NoError(t, err)
 	assert.Equal(t,
-		"CREATE OR ALTER PROCEDURE [sg].[usp_X] /* owned */ @AgentID INT AS BEGIN SET NOCOUNT ON; SELECT 1 END",
+		"CREATE OR ALTER PROCEDURE [sg].[usp_X]\n/* owned */\n@AgentID INT AS BEGIN SET NOCOUNT ON; SELECT 1 END",
 		stmt)
 }
 
@@ -264,7 +261,7 @@ func TestApplyProcedureWithOptions_DocAnnotationRendersBetweenPreambleAndNotice(
 	stmt, err := p.createOrAlterWithDefinition(chuck.MSSQLDialect{}, definition)
 	require.NoError(t, err)
 	assert.Equal(t,
-		"CREATE OR ALTER PROCEDURE [sg].[usp_X] /* doc */ /* ann */ /* owned */ @AgentID INT AS BEGIN SELECT 1 END",
+		"CREATE OR ALTER PROCEDURE [sg].[usp_X]\n/* doc */\n\n/* ann */\n\n/* owned */\n@AgentID INT AS BEGIN SELECT 1 END",
 		stmt)
 }
 

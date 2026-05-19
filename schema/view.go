@@ -57,12 +57,12 @@ func (v *ViewDef) Schema() string {
 	return v.schema
 }
 
-// WithDocAnnotation attaches a declaration-owned doc comment to the view. When
-// set, the annotation renders as a SQL block comment as part of the view's
-// own SQL output (between any caller-level DocPreamble and any caller-level
-// OwnershipNotice) and participates in body-drift comparison: changing the
-// annotation in code produces validation drift against a live view rendered
-// from the prior annotation. This is the per-object counterpart to
+// WithDocAnnotation attaches a per-view doc comment to the view declaration.
+// When set, the annotation renders as a SQL block comment as part of the
+// view's live SQL output (between any caller-level DocPreamble and any
+// caller-level OwnershipNotice). Validation intentionally ignores leading
+// block-comment front matter, so changing this annotation does not by itself
+// produce drift. This is the per-object counterpart to
 // CodeObjectOptions.DocPreamble, which remains a caller-level apply-owned
 // preamble shared across many objects.
 func (v *ViewDef) WithDocAnnotation(text string) *ViewDef {
@@ -148,18 +148,18 @@ func (v *ViewDef) createOrReplaceWithBody(d chuck.Dialect, body string) []string
 	qt := v.QualifiedNameFor(d)
 	switch d.Engine() {
 	case chuck.Postgres:
-		return []string{fmt.Sprintf("CREATE OR REPLACE VIEW %s AS %s", qt, body)}
+		return []string{joinSQLHeadPayload(fmt.Sprintf("CREATE OR REPLACE VIEW %s AS", qt), body)}
 	case chuck.MSSQL:
-		return []string{fmt.Sprintf("CREATE OR ALTER VIEW %s AS %s", qt, body)}
+		return []string{joinSQLHeadPayload(fmt.Sprintf("CREATE OR ALTER VIEW %s AS", qt), body)}
 	case chuck.SQLite:
 		return []string{
 			fmt.Sprintf("DROP VIEW IF EXISTS %s", qt),
-			fmt.Sprintf("CREATE VIEW %s AS %s", qt, body),
+			joinSQLHeadPayload(fmt.Sprintf("CREATE VIEW %s AS", qt), body),
 		}
 	default:
 		return []string{
 			fmt.Sprintf("DROP VIEW IF EXISTS %s", qt),
-			fmt.Sprintf("CREATE VIEW %s AS %s", qt, body),
+			joinSQLHeadPayload(fmt.Sprintf("CREATE VIEW %s AS", qt), body),
 		}
 	}
 }

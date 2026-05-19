@@ -245,24 +245,21 @@ func stripCreateViewPreamble(s string) string {
 	return s[loc[1]:]
 }
 
-// declaredBodyWithAnnotation returns the declared body that participates in
-// canonical drift comparison: when the view carries a declaration-owned doc
-// annotation it is rendered as a SQL block comment immediately before the
-// declared body, matching the slot the apply path injects.
-func declaredBodyWithAnnotation(v *ViewDef) string {
-	if c := renderOwnershipComment(v.DocAnnotation()); c != "" {
-		return c + " " + v.Body()
+// stripLeadingBlockComments removes any number of leading SQL block comments
+// plus surrounding leading whitespace. Used by validation so stacked doc /
+// ownership annotations do not participate in drift comparison; callers want
+// the actual executable statement body/definition checked, not front-matter
+// comments.
+func stripLeadingBlockComments(s string) string {
+	out := strings.TrimLeftFunc(s, unicode.IsSpace)
+	for strings.HasPrefix(out, "/*") {
+		end := strings.Index(out, "*/")
+		if end < 0 {
+			return out
+		}
+		out = strings.TrimLeftFunc(out[end+2:], unicode.IsSpace)
 	}
-	return v.Body()
-}
-
-// declaredDefinitionWithAnnotation is the procedure-side counterpart to
-// declaredBodyWithAnnotation.
-func declaredDefinitionWithAnnotation(p *ProcedureDef) string {
-	if c := renderOwnershipComment(p.DocAnnotation()); c != "" {
-		return c + " " + p.Definition()
-	}
-	return p.Definition()
+	return out
 }
 
 // canonicalizeStatement normalizes a SQL statement body for drift comparison.
@@ -321,14 +318,11 @@ func ValidateView(ctx context.Context, db *sql.DB, d chuck.Dialect, v *ViewDef) 
 }
 
 // ValidateViewWithOptions is the option-aware counterpart to ValidateView.
-// Ownership decoration is apply-owned, not declaration-owned: when
-// opts.OwnershipNotice or opts.DocPreamble are configured, the exact
-// rendered prefix is stripped from the live body before canonical
-// comparison. Live bodies that do not carry the configured markers still
-// validate cleanly against the same declared body, so validate-only callers
-// can pass options without forcing markers into the live object. Live
-// bodies that carry a different leading comment (including a stale notice
-// that no longer matches the configured value) still report drift.
+// Leading block comments are treated as documentation, not executable view
+// semantics: validation strips any leading block-comment stack from both the
+// declared body and the live body before canonical comparison. This means
+// ownership notices, doc preambles, per-object annotations, and other leading
+// `/* ... */` front matter do not cause drift on their own.
 //
 // When the view declares prior names via WithReplaces, any of those names
 // still present in the live database surface as additional drift entries
@@ -371,8 +365,8 @@ func validateViewWithOptionsInternal(ctx context.Context, db *sql.DB, d chuck.Di
 			Reason:                "pg_get_viewdef canonicalization (star expansion, fully-qualified identifiers, inserted casts) makes textual body comparison unreliable; existence confirmed",
 		})
 	default:
-		liveStripped := stripConfiguredApplyPrefix(live, opts, v.DocAnnotation())
-		declaredCanon := canonicalizeStatement(declaredBodyWithAnnotation(v))
+		liveStripped := stripLeadingBlockComments(stripConfiguredApplyPrefix(live, opts, v.DocAnnotation()))
+		declaredCanon := canonicalizeStatement(stripLeadingBlockComments(v.Body()))
 		liveCanon := canonicalizeStatement(liveStripped)
 		if declaredCanon != liveCanon {
 			drifts = append(drifts, ViewDrift{

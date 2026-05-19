@@ -159,11 +159,25 @@ func TestMSSQLDialect(t *testing.T) {
 		assert.Contains(t, create, "id INT PRIMARY KEY")
 	})
 
+	t.Run("CreateTableIfNotExists_EscapesSingleQuoteInName", func(t *testing.T) {
+		create := d.CreateTableIfNotExists("tab'le", "id INT PRIMARY KEY")
+		// Doubled '' inside the N'...' literal so the guard parses cleanly;
+		// the CREATE TABLE clause uses the un-escaped bracket-quoted form.
+		assert.Contains(t, create, "OBJECT_ID(N'[tab''le]')")
+		assert.Contains(t, create, "CREATE TABLE [tab'le]")
+	})
+
 	t.Run("DropTableIfExists", func(t *testing.T) {
 		drop := d.DropTableIfExists("Users")
 		assert.Contains(t, drop, "IF EXISTS")
 		assert.Contains(t, drop, "OBJECT_ID(N'[Users]')")
 		assert.Contains(t, drop, "DROP TABLE [Users]")
+	})
+
+	t.Run("DropTableIfExists_EscapesSingleQuoteInName", func(t *testing.T) {
+		drop := d.DropTableIfExists("tab'le")
+		assert.Contains(t, drop, "OBJECT_ID(N'[tab''le]')")
+		assert.Contains(t, drop, "DROP TABLE [tab'le]")
 	})
 
 	t.Run("CreateIndexIfNotExists", func(t *testing.T) {

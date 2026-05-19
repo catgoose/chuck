@@ -9,7 +9,7 @@ This artifact is diagnosis-only. No fixes were applied. Findings are graded by l
 
 ## Executive Summary
 
-The codebase is in good shape overall: tests are dense, dialects are factored cleanly, and the recent apply-owned ownership-notice rework (PRs #85/#86) tightened the validate contract honestly. The audit surfaced **two concrete latent bugs** in identifier quoting, **one naming smell** that will mislead readers as the procedure surface grows, **a small cluster of coverage gaps** around regex preamble strippers, and **a handful of godoc drifts** left over from the past three PRs. Nothing is currently breaking production; the two quoting bugs are reachable only when a caller passes an identifier containing `"` or `'`.
+The codebase is in good shape overall: tests are dense, dialects are factored cleanly, and the recent apply-owned ownership-notice rework (PRs #85/#86) tightened the validate contract honestly. The audit surfaced **two concrete latent bugs** in identifier quoting, **one naming smell** that will mislead readers as the procedure surface grows, **a small cluster of coverage gaps** around regex preamble strippers, and **a godoc drift** at the `Dialect` interface left over from the procedure-surface work. Nothing is currently breaking production; the two quoting bugs are reachable only when a caller passes an identifier containing `"` or `'`.
 
 ## Prioritized Findings
 
@@ -89,13 +89,6 @@ The codebase is in good shape overall: tests are dense, dialects are factored cl
 
 ### P3 — Docs / Godoc Drift
 
-#### F8. `dbrepo/fragments.go` package doc still claims "dialect-agnostic" before listing dialect-aware helpers
-- **Severity:** docs-drift
-- **Refs:** `dbrepo/fragments.go` package-level comment
-- **Evidence:** the doc was updated for PR #83's `SetValues` path but still uses "dialect-agnostic" framing for the `@Name`-placeholder helpers, which is true for the placeholder lane only. The Q-suffixed helpers and `BulkInsertInto`/`UpsertIntoQ` are dialect-aware, and the package now strongly couples to `chuck.Dialect` for quoting. A reader skimming the package doc will miss the distinction.
-- **Fix shape:** one-paragraph rewrite: "two lanes — `@Name` placeholders for drivers that translate `sql.NamedArg`, plus Q-suffixed helpers that take a `chuck.Dialect` for identifier quoting and normalization. See `UpdateBuilder.SetValues` for the positional-bind escape hatch."
-- **Status:** doc-only.
-
 #### F9. `Dialect.SupportsLastInsertID` semantic is undocumented at the interface
 - **Severity:** docs-drift
 - **Refs:** `sqlite.go:93` (`true`), `mssql.go:112` (`false`), `postgres.go:93` (`false`), interface declaration in `chuck.go`
@@ -148,11 +141,11 @@ The codebase is in good shape overall: tests are dense, dialects are factored cl
 2. **"MSSQL `CreateTableIfNotExists` / `DropTableIfExists` interpolate bracket-quoted name into `N'…'` literal without escaping single quotes"** — body: F2 above with reproducer.
 3. **"Rename `canonicalizeViewBody` → `canonicalizeStatement` to reflect dual-use across views and procedures"** — body: F3 above, mechanical refactor.
 
-The remaining findings (F5–F10) are real but smaller-leverage; recommend bundling into one "code-audit cleanup" PR rather than separate issues. If a follow-up roadmap is wanted, group as:
+The remaining findings (F5, F6, F7, F9, F10) are real but smaller-leverage; recommend bundling into one "code-audit cleanup" PR rather than separate issues. If a follow-up roadmap is wanted, group as:
 
 - Lane A: latent-bug fixes (F1, F2, F4 helper hoist).
 - Lane B: canonicalization rename + table-default whitespace decision (F3, F7).
-- Lane C: doc passes (F8, F9) + Search cleanup (F10) + coverage backfill (F5, F6).
+- Lane C: doc pass (F9) + Search cleanup (F10) + coverage backfill (F5, F6).
 
 ## Validation Performed for This Audit
 

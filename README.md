@@ -666,7 +666,7 @@ if err := schema.ApplyViewsWithOptions(ctx, db, dialect, opts, v); err != nil {
     return err
 }
 if err := schema.ValidateViewsWithOptions(ctx, db, dialect, opts, v); err != nil {
-    return err // unwraps to schema.ErrViewReplacementStillExists if a prior name lingers
+    return err // on SQLite/MSSQL, unwraps to schema.ErrViewReplacementStillExists when stale replacement is sole drift cause
 }
 ```
 

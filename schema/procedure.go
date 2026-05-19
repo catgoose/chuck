@@ -43,6 +43,7 @@ type ProcedureDef struct {
 	schema        string
 	definition    string
 	docAnnotation string
+	replaces      []chuck.ObjectName
 }
 
 // NewProcedure creates an unqualified owned procedure with the given name and
@@ -95,6 +96,28 @@ func (p *ProcedureDef) WithDocAnnotation(text string) *ProcedureDef {
 // procedure, or "" if none.
 func (p *ProcedureDef) DocAnnotation() string {
 	return p.docAnnotation
+}
+
+// WithReplaces declares prior names this procedure supersedes — used to
+// retire renamed or replaced procedures explicitly without schema-wide
+// pruning. Apply*WithOptions drops each listed name (exact schema + name
+// match, same object type) before creating the current procedure;
+// Validate*WithOptions reports each listed name as stale if it still exists
+// in the live database. Cross-type replacement is intentionally not supported.
+//
+// Multiple calls accumulate; batch apply / validate helpers dedupe duplicate
+// names across the batch so the same prior name is only dropped or checked
+// once. Names are matched by structured ObjectName: schema and name must
+// match exactly, with no schema-wide globbing.
+func (p *ProcedureDef) WithReplaces(names ...chuck.ObjectName) *ProcedureDef {
+	p.replaces = append(p.replaces, names...)
+	return p
+}
+
+// Replaces returns the declared prior names this procedure supersedes, in
+// caller-supplied order.
+func (p *ProcedureDef) Replaces() []chuck.ObjectName {
+	return p.replaces
 }
 
 // Definition returns the raw T-SQL definition declared for the procedure —

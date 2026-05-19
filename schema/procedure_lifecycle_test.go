@@ -100,6 +100,31 @@ func TestProcedureDriftError_Unwrap_AllDefinition(t *testing.T) {
 	assert.False(t, errors.Is(e, ErrProcedureMissing))
 }
 
+func TestProcedureDriftError_Unwrap_AllReplacementStale(t *testing.T) {
+	e := &ProcedureDriftError{Drifts: []ProcedureDrift{
+		{Object: chuck.ObjectName{Schema: "sg", Name: "usp_old_a"}, ReplacementStale: true},
+		{Object: chuck.ObjectName{Schema: "sg", Name: "usp_old_b"}, ReplacementStale: true},
+	}}
+	assert.True(t, errors.Is(e, ErrProcedureReplacementStillExists))
+	assert.False(t, errors.Is(e, ErrProcedureMissing))
+	assert.False(t, errors.Is(e, ErrProcedureDefinitionDrift))
+}
+
+func TestProcedureDef_WithReplaces_StoresNamesInOrder(t *testing.T) {
+	p := NewQualifiedProcedure("sg", "usp_X", "AS BEGIN SELECT 1 END").
+		WithReplaces(
+			chuck.ObjectName{Schema: "sg", Name: "usp_OldA"},
+			chuck.ObjectName{Schema: "sg", Name: "usp_OldB"},
+		).
+		WithReplaces(chuck.ObjectName{Name: "usp_LegacyBare"})
+	got := p.Replaces()
+	require.Len(t, got, 3)
+	assert.Equal(t, "usp_OldA", got[0].Name)
+	assert.Equal(t, "usp_OldB", got[1].Name)
+	assert.Equal(t, "usp_LegacyBare", got[2].Name)
+	assert.Equal(t, "", got[2].Schema)
+}
+
 func TestProcedureDriftError_Unwrap_MixedCauses_NoWrap(t *testing.T) {
 	// Mixed missing + definition-drift cases intentionally do not wrap
 	// either sentinel so callers can't branch on a single cause when the

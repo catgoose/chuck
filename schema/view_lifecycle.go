@@ -23,6 +23,12 @@ var ErrViewMissing = errors.New("schema: declared view does not exist in live da
 // missing-object and from infrastructure errors.
 var ErrViewBodyDrift = errors.New("schema: declared view body differs from live database body")
 
+// ErrViewReplacementStillExists is returned by ValidateView / ValidateViews
+// when a name declared via ViewDef.WithReplaces still exists in the live
+// database. Callers can errors.Is-detect this to distinguish "old name not
+// yet retired" from current-object drift.
+var ErrViewReplacementStillExists = errors.New("schema: declared replaced view still exists in live database")
+
 // ErrViewBodyComparisonUnsupported is returned by ValidateView / ValidateViews
 // when the live engine canonicalizes view definitions enough that body-text
 // drift cannot be honestly compared (today: Postgres `pg_get_viewdef` expands
@@ -49,9 +55,14 @@ type ViewDrift struct {
 	Missing               bool
 	BodyMismatch          bool
 	BodyComparisonSkipped bool
-	DeclaredBody          string
-	LiveBody              string
-	Reason                string
+	// ReplacementStale is true when Object names a prior view declared via
+	// ViewDef.WithReplaces that still exists in the live database. The
+	// current view (Object's caller) may still match; the drift flags a
+	// rename rollout that has not finished cleaning up the prior name.
+	ReplacementStale bool
+	DeclaredBody     string
+	LiveBody         string
+	Reason           string
 }
 
 // ViewDriftError is returned by ValidateView / ValidateViews when one or more
@@ -74,6 +85,8 @@ func (e *ViewDriftError) Error() string {
 		switch {
 		case d.Missing:
 			parts = append(parts, fmt.Sprintf("view %q: missing", obj))
+		case d.ReplacementStale:
+			parts = append(parts, fmt.Sprintf("view %q: replacement still exists", obj))
 		case d.BodyComparisonSkipped:
 			parts = append(parts, fmt.Sprintf("view %q: %s", obj, d.Reason))
 		case d.BodyMismatch:
@@ -92,6 +105,7 @@ func (e *ViewDriftError) Unwrap() error {
 	onlyMissing := true
 	onlyBody := true
 	onlySkipped := true
+	onlyReplStale := true
 	for _, d := range e.Drifts {
 		if !d.Missing {
 			onlyMissing = false
@@ -102,6 +116,9 @@ func (e *ViewDriftError) Unwrap() error {
 		if !d.BodyComparisonSkipped {
 			onlySkipped = false
 		}
+		if !d.ReplacementStale {
+			onlyReplStale = false
+		}
 	}
 	switch {
 	case onlyMissing:
@@ -110,6 +127,8 @@ func (e *ViewDriftError) Unwrap() error {
 		return ErrViewBodyDrift
 	case onlySkipped:
 		return ErrViewBodyComparisonUnsupported
+	case onlyReplStale:
+		return ErrViewReplacementStillExists
 	default:
 		return nil
 	}
@@ -310,40 +329,84 @@ func ValidateView(ctx context.Context, db *sql.DB, d chuck.Dialect, v *ViewDef) 
 // can pass options without forcing markers into the live object. Live
 // bodies that carry a different leading comment (including a stale notice
 // that no longer matches the configured value) still report drift.
+//
+// When the view declares prior names via WithReplaces, any of those names
+// still present in the live database surface as additional drift entries
+// (ReplacementStale=true), so a rename rollout that has not finished
+// cleaning up old names fails validation explicitly.
 func ValidateViewWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, v *ViewDef) error {
-	live, exists, err := LiveViewBody(ctx, db, d, v)
+	drifts, err := validateViewWithOptionsInternal(ctx, db, d, opts, v, nil)
 	if err != nil {
 		return err
 	}
-	if !exists {
-		return &ViewDriftError{Drifts: []ViewDrift{{
+	if len(drifts) == 0 {
+		return nil
+	}
+	return &ViewDriftError{Drifts: drifts}
+}
+
+// validateViewWithOptionsInternal performs the per-view validate work and
+// returns drifts in caller-supplied order. When checked != nil, replacement
+// names are recorded as they are queried so a batch validator can dedupe
+// repeated names across multiple defs.
+func validateViewWithOptionsInternal(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, v *ViewDef, checked map[string]struct{}) ([]ViewDrift, error) {
+	var drifts []ViewDrift
+	live, exists, err := LiveViewBody(ctx, db, d, v)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case !exists:
+		drifts = append(drifts, ViewDrift{
 			Object:  v.Object(),
 			Missing: true,
 			Reason:  "view does not exist",
-		}}}
-	}
-	if d.Engine() == chuck.Postgres {
-		return &ViewDriftError{Drifts: []ViewDrift{{
+		})
+	case d.Engine() == chuck.Postgres:
+		drifts = append(drifts, ViewDrift{
 			Object:                v.Object(),
 			BodyComparisonSkipped: true,
 			DeclaredBody:          v.Body(),
 			LiveBody:              live,
 			Reason:                "pg_get_viewdef canonicalization (star expansion, fully-qualified identifiers, inserted casts) makes textual body comparison unreliable; existence confirmed",
-		}}}
+		})
+	default:
+		liveStripped := stripConfiguredApplyPrefix(live, opts, v.DocAnnotation())
+		declaredCanon := canonicalizeStatement(declaredBodyWithAnnotation(v))
+		liveCanon := canonicalizeStatement(liveStripped)
+		if declaredCanon != liveCanon {
+			drifts = append(drifts, ViewDrift{
+				Object:       v.Object(),
+				BodyMismatch: true,
+				DeclaredBody: declaredCanon,
+				LiveBody:     liveCanon,
+				Reason:       "view body differs after canonical normalization",
+			})
+		}
 	}
-	liveStripped := stripConfiguredApplyPrefix(live, opts, v.DocAnnotation())
-	declaredCanon := canonicalizeStatement(declaredBodyWithAnnotation(v))
-	liveCanon := canonicalizeStatement(liveStripped)
-	if declaredCanon == liveCanon {
-		return nil
+	for _, repl := range v.Replaces() {
+		key := objectKey(repl)
+		if checked != nil {
+			if _, ok := checked[key]; ok {
+				continue
+			}
+			checked[key] = struct{}{}
+		}
+		tmp := &ViewDef{Name: repl.Name, schema: repl.Schema}
+		liveBody, replExists, err := LiveViewBody(ctx, db, d, tmp)
+		if err != nil {
+			return nil, err
+		}
+		if replExists {
+			drifts = append(drifts, ViewDrift{
+				Object:           repl,
+				ReplacementStale: true,
+				LiveBody:         liveBody,
+				Reason:           "view declared as replaced but still exists in live database",
+			})
+		}
 	}
-	return &ViewDriftError{Drifts: []ViewDrift{{
-		Object:       v.Object(),
-		BodyMismatch: true,
-		DeclaredBody: declaredCanon,
-		LiveBody:     liveCanon,
-		Reason:       "view body differs after canonical normalization",
-	}}}
+	return drifts, nil
 }
 
 // ValidateViews validates each given view in order, aggregating any drift
@@ -355,20 +418,18 @@ func ValidateViews(ctx context.Context, db *sql.DB, d chuck.Dialect, views ...*V
 
 // ValidateViewsWithOptions is the option-aware counterpart to ValidateViews.
 // See ValidateViewWithOptions for the per-view semantics; aggregation behavior
-// is identical to ValidateViews.
+// is identical to ValidateViews. Replacement-name checks are deduped across
+// the batch so the same prior name only surfaces once even if it is declared
+// via WithReplaces on multiple defs.
 func ValidateViewsWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, views ...*ViewDef) error {
+	checked := map[string]struct{}{}
 	var drifts []ViewDrift
 	for _, v := range views {
-		err := ValidateViewWithOptions(ctx, db, d, opts, v)
-		if err == nil {
-			continue
+		ds, err := validateViewWithOptionsInternal(ctx, db, d, opts, v, checked)
+		if err != nil {
+			return err
 		}
-		var drift *ViewDriftError
-		if errors.As(err, &drift) {
-			drifts = append(drifts, drift.Drifts...)
-			continue
-		}
-		return err
+		drifts = append(drifts, ds...)
 	}
 	if len(drifts) == 0 {
 		return nil
@@ -398,7 +459,31 @@ func ApplyView(ctx context.Context, db *sql.DB, d chuck.Dialect, v *ViewDef) err
 // prefixed with the corresponding SQL block comment so DB-side readers can
 // see the chuck-owned marker. Callers that use this path should pair it with
 // ValidateViewWithOptions (same opts) to keep apply and validate coherent.
+//
+// When the view declares prior names via WithReplaces, each listed name is
+// dropped (same dialect-aware DROP IF EXISTS pattern as a regular view drop)
+// before the current view is created. Cross-type drops are not attempted.
 func ApplyViewWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, v *ViewDef) error {
+	return applyViewWithOptionsInternal(ctx, db, d, opts, v, nil)
+}
+
+// applyViewWithOptionsInternal performs the per-view apply work. When
+// dropped != nil, replacement names already dropped earlier in the batch are
+// skipped so the same prior name is only dropped once across a batch.
+func applyViewWithOptionsInternal(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, v *ViewDef, dropped map[string]struct{}) error {
+	for _, repl := range v.Replaces() {
+		key := objectKey(repl)
+		if dropped != nil {
+			if _, ok := dropped[key]; ok {
+				continue
+			}
+			dropped[key] = struct{}{}
+		}
+		tmp := &ViewDef{Name: repl.Name, schema: repl.Schema}
+		if _, err := db.ExecContext(ctx, tmp.DropSQL(d)); err != nil {
+			return fmt.Errorf("schema: drop replaced view %q: %w", key, err)
+		}
+	}
 	body := applyOwnershipNoticePrefix(v.Body(), opts, v.DocAnnotation())
 	for _, stmt := range v.createOrReplaceWithBody(d, body) {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
@@ -416,9 +501,13 @@ func ApplyViews(ctx context.Context, db *sql.DB, d chuck.Dialect, views ...*View
 }
 
 // ApplyViewsWithOptions is the option-aware counterpart to ApplyViews.
+// Replacement-name drops are deduped across the batch so the same prior name
+// is only issued one DROP statement even if it is declared via WithReplaces
+// on multiple defs.
 func ApplyViewsWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, views ...*ViewDef) error {
+	dropped := map[string]struct{}{}
 	for _, v := range views {
-		if err := ApplyViewWithOptions(ctx, db, d, opts, v); err != nil {
+		if err := applyViewWithOptionsInternal(ctx, db, d, opts, v, dropped); err != nil {
 			return err
 		}
 	}

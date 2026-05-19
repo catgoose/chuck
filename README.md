@@ -650,6 +650,30 @@ Declaration-owned drift (per-object `WithDocAnnotation`):
 
 Bare `ApplyView` / `ValidateView` / `ApplyProcedure` / `ValidateProcedure` are unchanged: they neither inject nor tolerate markers.
 
+#### Renaming or retiring an owned view or procedure
+
+Use **`WithReplaces(names ...chuck.ObjectName)`** on `ViewDef` or `ProcedureDef` to declare prior names that the apply path should drop and the validate path should flag as stale if they still exist. Same-type only: views replace views, procedures replace procedures. No schema-wide pruning, no automatic name inference.
+
+```go
+v := schema.NewView("v_open_tasks",
+    "SELECT id FROM tasks WHERE done = 0").
+    WithReplaces(
+        chuck.ObjectName{Name: "v_open_tasks_v1"},
+        chuck.ObjectName{Schema: "legacy", Name: "v_OpenTasks"},
+    )
+
+if err := schema.ApplyViewsWithOptions(ctx, db, dialect, opts, v); err != nil {
+    return err
+}
+if err := schema.ValidateViewsWithOptions(ctx, db, dialect, opts, v); err != nil {
+    return err // on SQLite/MSSQL, unwraps to schema.ErrViewReplacementStillExists when stale replacement is sole drift cause
+}
+```
+
+Apply semantics: each listed name is dropped with the same dialect-aware `DROP IF EXISTS` pattern as a regular owned-object drop, then the current view (or procedure) is created. Validate semantics: each listed name is queried in the live database; any name still present surfaces as a `ViewDrift` / `ProcedureDrift` entry with `ReplacementStale=true` and the aggregated error unwraps to `schema.ErrViewReplacementStillExists` / `schema.ErrProcedureReplacementStillExists` when stale replacements are the only drift cause.
+
+Batch helpers (`ApplyViewsWithOptions`, `ValidateViewsWithOptions`, and the procedure analogues) dedupe duplicate names across defs by structured `ObjectName` (schema + name match exactly), so the same prior name is only dropped or checked once even when multiple defs name it.
+
 Engine notes:
 
 - **SQLite** stores the view text verbatim in `sqlite_master.sql`, so both comments are fully visible there.

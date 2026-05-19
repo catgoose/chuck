@@ -226,11 +226,12 @@ func stripCreateViewPreamble(s string) string {
 	return s[loc[1]:]
 }
 
-// canonicalizeViewBody normalizes a view body for drift comparison. It trims
-// surrounding whitespace, strips trailing semicolons, and collapses runs of
-// internal whitespace (including newlines/tabs) to a single space. The result
-// is the comparable form — not a roundtrippable SQL string.
-func canonicalizeViewBody(s string) string {
+// canonicalizeStatement normalizes a SQL statement body for drift comparison.
+// Used for both view bodies and procedure definitions. It trims surrounding
+// whitespace, strips trailing semicolons, and collapses runs of internal
+// whitespace (including newlines/tabs) to a single space. The result is the
+// comparable form — not a roundtrippable SQL string.
+func canonicalizeStatement(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.TrimRight(s, ";")
 	s = strings.TrimSpace(s)
@@ -311,8 +312,8 @@ func ValidateViewWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, o
 		}}}
 	}
 	liveStripped := stripConfiguredApplyPrefix(live, opts)
-	declaredCanon := canonicalizeViewBody(v.Body())
-	liveCanon := canonicalizeViewBody(liveStripped)
+	declaredCanon := canonicalizeStatement(v.Body())
+	liveCanon := canonicalizeStatement(liveStripped)
 	if declaredCanon == liveCanon {
 		return nil
 	}

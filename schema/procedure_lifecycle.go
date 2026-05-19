@@ -178,8 +178,8 @@ func ValidateProcedureWithOptions(ctx context.Context, db *sql.DB, d chuck.Diale
 		}}}
 	}
 	liveStripped := stripConfiguredApplyPrefix(live, opts)
-	declaredCanon := canonicalizeViewBody(p.Definition())
-	liveCanon := canonicalizeViewBody(liveStripped)
+	declaredCanon := canonicalizeStatement(p.Definition())
+	liveCanon := canonicalizeStatement(liveStripped)
 	if declaredCanon == liveCanon {
 		return nil
 	}

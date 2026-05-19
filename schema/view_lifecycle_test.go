@@ -56,7 +56,7 @@ func TestStripCreateViewPreamble(t *testing.T) {
 	}
 }
 
-func TestCanonicalizeViewBody(t *testing.T) {
+func TestCanonicalizeStatement(t *testing.T) {
 	cases := []struct {
 		name string
 		in   string
@@ -70,7 +70,7 @@ func TestCanonicalizeViewBody(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, canonicalizeViewBody(tc.in))
+			assert.Equal(t, tc.want, canonicalizeStatement(tc.in))
 		})
 	}
 }
@@ -125,7 +125,7 @@ func TestValidateView_SQLite_BodyDrift(t *testing.T) {
 }
 
 func TestValidateView_SQLite_WhitespaceTolerant(t *testing.T) {
-	// canonicalizeViewBody collapses whitespace, so a declared body with
+	// canonicalizeStatement collapses whitespace, so a declared body with
 	// different indentation than the live body must still validate as match.
 	ctx, db, d := openSQLiteForViewLifecycle(t)
 	defer db.Close()

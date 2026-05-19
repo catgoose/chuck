@@ -68,17 +68,19 @@ func (MSSQLDialect) DecimalType(precision, scale int) string {
 
 func (d MSSQLDialect) CreateTableIfNotExists(table, body string) string {
 	q := d.QuoteIdentifier(table)
+	qLit := strings.ReplaceAll(q, "'", "''")
 	return fmt.Sprintf(
 		"IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'%s') AND type in (N'U')) BEGIN CREATE TABLE %s (\n%s\n\t\t) END",
-		q, q, body,
+		qLit, q, body,
 	)
 }
 
 func (d MSSQLDialect) DropTableIfExists(table string) string {
 	q := d.QuoteIdentifier(table)
+	qLit := strings.ReplaceAll(q, "'", "''")
 	return fmt.Sprintf(
 		"IF EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'%s') AND type in (N'U')) BEGIN DROP TABLE %s; END",
-		q, q,
+		qLit, q,
 	)
 }
 

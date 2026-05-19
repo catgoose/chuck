@@ -13,6 +13,12 @@ import "strings"
 // Validate*WithOptions. Validate-only callers may pass options without
 // forcing the markers to exist in the live database.
 //
+// For per-object documentation that should be declaration-owned — part of
+// the object's own SQL identity and a drift signal when changed — use
+// ViewDef.WithDocAnnotation / ProcedureDef.WithDocAnnotation instead. The
+// declaration-owned annotation renders between DocPreamble and
+// OwnershipNotice in the live SQL and is included in body-drift comparison.
+//
 // Intended usage is one central config built once in bootstrap and passed
 // to ApplyViewsWithOptions / ValidateViewsWithOptions /
 // ApplyProceduresWithOptions / ValidateProceduresWithOptions rather than
@@ -29,12 +35,13 @@ import "strings"
 //	    return err
 //	}
 //
-// Render order when both fields are set: DocPreamble first, then
-// OwnershipNotice, then payload. Each non-empty field is rendered as a
-// `/* ... */` SQL block comment followed by a single space. Validate*WithOptions
-// strips this exact ordered prefix from the live text before canonical
-// comparison; live text that begins with a different leading comment will
-// still report drift.
+// Render order when fields are set: DocPreamble first, then any per-object
+// declaration-owned doc annotation, then OwnershipNotice, then payload. Each
+// non-empty segment is rendered as a `/* ... */` SQL block comment followed
+// by a single space. Validate*WithOptions strips this exact ordered prefix
+// from the live text before canonical comparison (keeping the
+// declaration-owned annotation, which participates in comparison); live text
+// that begins with a different leading comment will still report drift.
 type CodeObjectOptions struct {
 	// OwnershipNotice is an opt-in apply-owned marker the option-aware Apply*
 	// helpers prepend to the rendered view body or procedure definition as a
@@ -93,12 +100,17 @@ func renderOwnershipComment(notice string) string {
 
 // renderApplyPrefix returns the full configured comment prefix that
 // Apply*WithOptions prepends to the rendered body / definition payload.
-// DocPreamble is rendered first, then OwnershipNotice; each non-empty field
-// contributes a `/* ... */ ` segment (block comment plus single trailing
-// space). When both fields are empty, returns "".
-func renderApplyPrefix(opts CodeObjectOptions) string {
+// Render order: DocPreamble (apply-owned), declared per-object annotation
+// (declaration-owned), OwnershipNotice (apply-owned). Each non-empty
+// segment contributes a `/* ... */ ` chunk (block comment plus single
+// trailing space). When all three are empty, returns "".
+func renderApplyPrefix(opts CodeObjectOptions, declaredAnnotation string) string {
 	var b strings.Builder
 	if c := renderOwnershipComment(opts.DocPreamble); c != "" {
+		b.WriteString(c)
+		b.WriteByte(' ')
+	}
+	if c := renderOwnershipComment(declaredAnnotation); c != "" {
 		b.WriteString(c)
 		b.WriteByte(' ')
 	}
@@ -115,8 +127,14 @@ func renderApplyPrefix(opts CodeObjectOptions) string {
 // segment to keep the resulting statement well-formed regardless of whether
 // the payload starts with a SELECT keyword (views), a parameter declaration
 // (procedures), or an AS keyword (zero-parameter procedures).
-func applyOwnershipNoticePrefix(payload string, opts CodeObjectOptions) string {
-	prefix := renderApplyPrefix(opts)
+//
+// declaredAnnotation is the per-object declaration-owned doc annotation
+// (ViewDef.DocAnnotation / ProcedureDef.DocAnnotation); pass "" when not
+// declared. When non-empty it is rendered between the caller-level
+// DocPreamble and the caller-level OwnershipNotice so callers reading the
+// live SQL see preamble → per-object annotation → ownership.
+func applyOwnershipNoticePrefix(payload string, opts CodeObjectOptions, declaredAnnotation string) string {
+	prefix := renderApplyPrefix(opts, declaredAnnotation)
 	if prefix == "" {
 		return payload
 	}
@@ -124,24 +142,33 @@ func applyOwnershipNoticePrefix(payload string, opts CodeObjectOptions) string {
 }
 
 // stripConfiguredApplyPrefix strips the exact configured DocPreamble and
-// OwnershipNotice comment prefixes (in that order) from the front of live
-// text, plus any leading whitespace, returning the remainder. When a
-// configured prefix is not present the function leaves the text unchanged
-// for that segment — a configured-but-absent marker is tolerated so
-// validate-only callers can pass options without forcing markers into the
-// live object. When no fields are configured, the function returns live
-// unchanged.
-func stripConfiguredApplyPrefix(live string, opts CodeObjectOptions) string {
+// OwnershipNotice comment prefixes from the front of live text in their
+// declared render order, plus any leading whitespace. When a per-object
+// declaration-owned doc annotation is declared, it is recognized in its
+// natural slot (between DocPreamble and OwnershipNotice) and retained in
+// the returned string so it can participate in canonical drift comparison.
+// Configured-but-absent apply-owned markers are tolerated; an absent or
+// mismatched declaration-owned annotation reports as body drift because
+// declared identity has changed.
+func stripConfiguredApplyPrefix(live string, opts CodeObjectOptions, declaredAnnotation string) string {
+	docComment := renderOwnershipComment(opts.DocPreamble)
+	annComment := renderOwnershipComment(declaredAnnotation)
+	ownComment := renderOwnershipComment(opts.OwnershipNotice)
+
 	out := strings.TrimLeft(live, " \t\r\n")
-	if c := renderOwnershipComment(opts.DocPreamble); c != "" {
-		if strings.HasPrefix(out, c) {
-			out = strings.TrimLeft(out[len(c):], " \t\r\n")
-		}
+	if docComment != "" && strings.HasPrefix(out, docComment) {
+		out = strings.TrimLeft(out[len(docComment):], " \t\r\n")
 	}
-	if c := renderOwnershipComment(opts.OwnershipNotice); c != "" {
-		if strings.HasPrefix(out, c) {
-			out = strings.TrimLeft(out[len(c):], " \t\r\n")
-		}
+	kept := ""
+	if annComment != "" && strings.HasPrefix(out, annComment) {
+		kept = annComment
+		out = strings.TrimLeft(out[len(annComment):], " \t\r\n")
+	}
+	if ownComment != "" && strings.HasPrefix(out, ownComment) {
+		out = strings.TrimLeft(out[len(ownComment):], " \t\r\n")
+	}
+	if kept != "" {
+		return kept + " " + out
 	}
 	return out
 }

@@ -177,8 +177,8 @@ func ValidateProcedureWithOptions(ctx context.Context, db *sql.DB, d chuck.Diale
 			Reason:  "procedure does not exist",
 		}}}
 	}
-	liveStripped := stripConfiguredApplyPrefix(live, opts)
-	declaredCanon := canonicalizeStatement(p.Definition())
+	liveStripped := stripConfiguredApplyPrefix(live, opts, p.DocAnnotation())
+	declaredCanon := canonicalizeStatement(declaredDefinitionWithAnnotation(p))
 	liveCanon := canonicalizeStatement(liveStripped)
 	if declaredCanon == liveCanon {
 		return nil
@@ -250,7 +250,7 @@ func ApplyProcedure(ctx context.Context, db *sql.DB, d chuck.Dialect, p *Procedu
 // should pair it with ValidateProcedureWithOptions (same opts) to keep apply
 // and validate coherent.
 func ApplyProcedureWithOptions(ctx context.Context, db *sql.DB, d chuck.Dialect, opts CodeObjectOptions, p *ProcedureDef) error {
-	definition := applyOwnershipNoticePrefix(p.Definition(), opts)
+	definition := applyOwnershipNoticePrefix(p.Definition(), opts, p.DocAnnotation())
 	stmt, err := p.createOrAlterWithDefinition(d, definition)
 	if err != nil {
 		return err

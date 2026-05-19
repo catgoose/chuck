@@ -39,9 +39,10 @@ var ErrProcedureDialectUnsupported = errors.New("schema: stored procedure owners
 // entrypoints layered on top of the table graph; forcing them into a
 // generalized scheduler would add weight without buying clarity.
 type ProcedureDef struct {
-	Name       string
-	schema     string
-	definition string
+	Name          string
+	schema        string
+	definition    string
+	docAnnotation string
 }
 
 // NewProcedure creates an unqualified owned procedure with the given name and
@@ -76,6 +77,24 @@ func (p *ProcedureDef) WithSchema(schema string) *ProcedureDef {
 // none.
 func (p *ProcedureDef) Schema() string {
 	return p.schema
+}
+
+// WithDocAnnotation attaches a declaration-owned doc comment to the procedure.
+// When set, the annotation renders as a SQL block comment as part of the
+// procedure's own SQL output (between any caller-level DocPreamble and any
+// caller-level OwnershipNotice) and participates in definition-drift
+// comparison: changing the annotation in code produces validation drift
+// against a live procedure rendered from the prior annotation. This is the
+// per-object counterpart to CodeObjectOptions.DocPreamble.
+func (p *ProcedureDef) WithDocAnnotation(text string) *ProcedureDef {
+	p.docAnnotation = text
+	return p
+}
+
+// DocAnnotation returns the declared declaration-owned doc annotation for the
+// procedure, or "" if none.
+func (p *ProcedureDef) DocAnnotation() string {
+	return p.docAnnotation
 }
 
 // Definition returns the raw T-SQL definition declared for the procedure —

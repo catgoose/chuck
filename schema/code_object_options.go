@@ -15,9 +15,9 @@ import "strings"
 //
 // For per-object documentation carried on the declaration itself, use
 // ViewDef.WithDocAnnotation / ProcedureDef.WithDocAnnotation instead. That
-// annotation renders between DocPreamble and OwnershipNotice in the live SQL.
-// Validation ignores leading block-comment front matter, so comment-only
-// changes do not participate in drift comparison.
+// annotation renders last among the leading comments — after DocPreamble,
+// closest to the SQL payload. Validation ignores leading block-comment front
+// matter, so comment-only changes do not participate in drift comparison.
 //
 // Intended usage is one central config built once in bootstrap and passed
 // to ApplyViewsWithOptions / ValidateViewsWithOptions /
@@ -35,14 +35,15 @@ import "strings"
 //	    return err
 //	}
 //
-// Render order when fields are set: DocPreamble first, then any per-object
-// doc annotation, then OwnershipNotice, then payload. Each
-// non-empty segment is rendered as its own `/* ... */` SQL block comment;
-// comment blocks are separated by a blank line and the payload starts on the
-// next line after the final block. Validate*WithOptions strips this exact
-// ordered prefix from the live text before canonical comparison, then ignores
-// any remaining leading block-comment front matter on both sides; comment-only
-// changes therefore do not report drift.
+// Render order when fields are set: OwnershipNotice first (chuck-owned marker
+// up top so DB readers see it immediately), then DocPreamble, then any
+// per-object doc annotation, then payload. Each non-empty segment is rendered
+// as its own `/* ... */` SQL block comment; comment blocks are separated by a
+// blank line and the payload starts on the next line after the final block.
+// Validate*WithOptions strips this exact ordered prefix from the live text
+// before canonical comparison, then ignores any remaining leading
+// block-comment front matter on both sides; comment-only changes therefore do
+// not report drift.
 type CodeObjectOptions struct {
 	// OwnershipNotice is an opt-in apply-owned marker the option-aware Apply*
 	// helpers prepend to the rendered view body or procedure definition as a
@@ -104,21 +105,21 @@ func renderOwnershipComment(notice string) string {
 
 // renderApplyPrefix returns the full configured comment prefix that
 // Apply*WithOptions prepends to the rendered body / definition payload.
-// Render order: DocPreamble (apply-owned), declared per-object annotation,
-// OwnershipNotice (apply-owned). Each non-empty
-// segment becomes its own `/* ... */` block comment. Comment blocks are
-// separated by a blank line, and the returned prefix ends with a single
-// newline so the payload starts on the next line. When all three are
-// empty, returns "".
+// Render order: OwnershipNotice (apply-owned, chuck-owned marker up top),
+// DocPreamble (apply-owned), declared per-object annotation (closest to the
+// payload). Each non-empty segment becomes its own `/* ... */` block
+// comment. Comment blocks are separated by a blank line, and the returned
+// prefix ends with a single newline so the payload starts on the next line.
+// When all three are empty, returns "".
 func renderApplyPrefix(opts CodeObjectOptions, declaredAnnotation string) string {
 	var comments []string
+	if c := renderOwnershipComment(opts.OwnershipNotice); c != "" {
+		comments = append(comments, c)
+	}
 	if c := renderOwnershipComment(opts.DocPreamble); c != "" {
 		comments = append(comments, c)
 	}
 	if c := renderOwnershipComment(declaredAnnotation); c != "" {
-		comments = append(comments, c)
-	}
-	if c := renderOwnershipComment(opts.OwnershipNotice); c != "" {
 		comments = append(comments, c)
 	}
 	if len(comments) == 0 {
@@ -134,11 +135,11 @@ func renderApplyPrefix(opts CodeObjectOptions, declaredAnnotation string) string
 // of whether the payload starts with a SELECT keyword (views), a parameter
 // declaration (procedures), or an AS keyword (zero-parameter procedures).
 //
-// declaredAnnotation is the per-object declaration-owned doc annotation
-// (ViewDef.DocAnnotation / ProcedureDef.DocAnnotation); pass "" when not
-// declared. When non-empty it is rendered between the caller-level
-// DocPreamble and the caller-level OwnershipNotice so callers reading the
-// live SQL see preamble → per-object annotation → ownership.
+// declaredAnnotation is the per-object doc annotation (ViewDef.DocAnnotation /
+// ProcedureDef.DocAnnotation); pass "" when not declared. When non-empty it
+// is rendered after the caller-level DocPreamble (and after any
+// OwnershipNotice) so callers reading the live SQL see ownership → preamble
+// → per-object annotation → payload.
 func applyOwnershipNoticePrefix(payload string, opts CodeObjectOptions, declaredAnnotation string) string {
 	prefix := renderApplyPrefix(opts, declaredAnnotation)
 	if prefix == "" {
@@ -164,20 +165,23 @@ func joinSQLHeadPayload(head, payload string) string {
 	}
 }
 
-// stripConfiguredApplyPrefix strips the exact configured DocPreamble and
-// OwnershipNotice comment prefixes from the front of live text in their
-// declared render order, plus any leading whitespace. When a per-object
-// doc annotation is declared, it is recognized in its natural slot (between
-// DocPreamble and OwnershipNotice) and retained in the returned string.
-// Configured-but-absent apply-owned markers are tolerated. Callers that want
-// comment-insensitive comparison can run broader leading-comment
-// normalization after this helper.
+// stripConfiguredApplyPrefix strips the exact configured OwnershipNotice and
+// DocPreamble comment prefixes from the front of live text in their declared
+// render order (notice first, then preamble), plus any leading whitespace.
+// When a per-object doc annotation is declared, it is recognized in its
+// natural slot (after DocPreamble, closest to the payload) and retained in
+// the returned string. Configured-but-absent apply-owned markers are
+// tolerated. Callers that want comment-insensitive comparison can run broader
+// leading-comment normalization after this helper.
 func stripConfiguredApplyPrefix(live string, opts CodeObjectOptions, declaredAnnotation string) string {
 	docComment := renderOwnershipComment(opts.DocPreamble)
 	annComment := renderOwnershipComment(declaredAnnotation)
 	ownComment := renderOwnershipComment(opts.OwnershipNotice)
 
 	out := strings.TrimLeft(live, " \t\r\n")
+	if ownComment != "" && strings.HasPrefix(out, ownComment) {
+		out = strings.TrimLeft(out[len(ownComment):], " \t\r\n")
+	}
 	if docComment != "" && strings.HasPrefix(out, docComment) {
 		out = strings.TrimLeft(out[len(docComment):], " \t\r\n")
 	}
@@ -185,9 +189,6 @@ func stripConfiguredApplyPrefix(live string, opts CodeObjectOptions, declaredAnn
 	if annComment != "" && strings.HasPrefix(out, annComment) {
 		kept = annComment
 		out = strings.TrimLeft(out[len(annComment):], " \t\r\n")
-	}
-	if ownComment != "" && strings.HasPrefix(out, ownComment) {
-		out = strings.TrimLeft(out[len(ownComment):], " \t\r\n")
 	}
 	if kept != "" {
 		return kept + " " + out

@@ -461,10 +461,10 @@ func TestProcedureValidateApply_MSSQL(t *testing.T) {
 // Contract covered:
 //
 //   - apply-with-options injects the notice and the doc preamble into live
-//     SQL in preamble-then-notice order
+//     SQL in notice-then-preamble order
 //   - validate-with-same-options strips the configured prefix and reports clean
-//   - bare ValidateView (no opts) still reports drift because the live body
-//     carries comments the declared body does not
+//   - bare ValidateView (no opts) still validates because leading
+//     comment-only front matter is ignored
 //   - bare ApplyView strips the markers; validate-with-options against the
 //     bare live body is clean (apply-owned tolerance — markers are not
 //     required to exist live)
@@ -504,11 +504,11 @@ func TestViewValidateApplyWithOptions_SQLite_OwnershipNotice(t *testing.T) {
 	assert.Contains(t, liveSQL, "Owned by https://github.com/catgoose/chuck")
 	assert.Contains(t, liveSQL, "may fail validation or be overwritten")
 	assert.Contains(t, liveSQL, "open tasks fan-out for handler X")
-	// Render order: doc preamble appears before the ownership notice.
+	// Render order: ownership notice appears before the doc preamble.
 	docIdx := strings.Index(liveSQL, "open tasks fan-out")
 	notIdx := strings.Index(liveSQL, "Owned by https://github.com/catgoose/chuck")
 	require.True(t, docIdx >= 0 && notIdx >= 0)
-	assert.Less(t, docIdx, notIdx, "DocPreamble must render before OwnershipNotice")
+	assert.Less(t, notIdx, docIdx, "OwnershipNotice must render before DocPreamble")
 
 	// Bare ValidateView (no opts) also passes: leading comment-only front
 	// matter is ignored during body comparison.
@@ -539,8 +539,9 @@ func TestViewValidateApplyWithOptions_SQLite_OwnershipNotice(t *testing.T) {
 // Contract covered:
 //
 //   - apply + validate with the same declared annotation is coherent
-//   - the rendered annotation lands in sqlite_master.sql between the
-//     caller-level DocPreamble and the caller-level OwnershipNotice
+//   - the rendered annotation lands in sqlite_master.sql last among the
+//     leading comments, after the caller-level OwnershipNotice and the
+//     caller-level DocPreamble, closest to the SELECT body
 //   - changing the declared annotation in code does not produce validation
 //     drift because comment-only front matter is ignored
 //   - the same ignore-comments rule holds even without any caller-level
@@ -580,8 +581,8 @@ func TestViewValidateApplyWithOptions_SQLite_DocAnnotation(t *testing.T) {
 	notIdx := strings.Index(liveSQL, "Owned by https://github.com/catgoose/chuck")
 	require.True(t, docIdx >= 0 && annIdx >= 0 && notIdx >= 0,
 		"all three comment segments must be present in the live SQL")
+	assert.Less(t, notIdx, docIdx, "OwnershipNotice must render before DocPreamble")
 	assert.Less(t, docIdx, annIdx, "DocPreamble must render before doc annotation")
-	assert.Less(t, annIdx, notIdx, "doc annotation must render before OwnershipNotice")
 
 	// Change annotation text in code. Validation still passes because
 	// leading comments are documentation, not executable view semantics.

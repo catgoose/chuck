@@ -618,7 +618,7 @@ if dialect.Engine() == chuck.MSSQL {
 - **`OwnershipNotice`** — apply-owned marker. `schema.DefaultOwnershipNotice` is intentionally soft (it says out-of-band changes "may" fail validation or be overwritten) because the `Validate*` / `Apply*` lanes are explicit and Postgres view validation is existence-only. Callers can supply any string.
 - **`DocPreamble`** — optional caller-controlled doc comment. Intended for purpose / contact / runbook links. **Not** treated as proof of ownership; it is metadata only.
 
-A third lane is **declaration-owned** and lives on the object itself:
+A third lane lives on the object itself:
 
 - **`ViewDef.WithDocAnnotation(text)` / `ProcedureDef.WithDocAnnotation(text)`** — per-object doc comment carried by the declaration. Unlike `DocPreamble` (which is shared across many objects and caller-controlled), the annotation hangs directly off the owned object and renders into the live SQL. Validation ignores leading comment-only front matter, so changing the text in code does **not** by itself produce drift.
 
@@ -628,7 +628,7 @@ v := schema.NewView("v_open_tasks",
     WithDocAnnotation("v_open_tasks v1: returns currently-open task ids")
 ```
 
-When all three are set the rendered order is **`DocPreamble`, then per-object annotation, then `OwnershipNotice`**, then the payload. Each non-empty segment becomes its own `/* ... */` SQL block comment, with a blank line between comment blocks, and the payload starts on the next line after the final block. `Validate*WithOptions` strips configured front matter and then ignores any remaining leading block comments on both sides before comparing the executable statement body/definition, so comment-only changes do not report drift.
+When all three are set the rendered order is **`OwnershipNotice`, then `DocPreamble`, then per-object annotation**, then the payload. The chuck-owned marker sits at the top so DB readers see it first; the per-object annotation sits closest to the SQL body so it reads like a docstring on the object. Each non-empty segment becomes its own `/* ... */` SQL block comment, with a blank line between comment blocks, and the payload starts on the next line after the final block. `Validate*WithOptions` strips configured front matter and then ignores any remaining leading block comments on both sides before comparing the executable statement body/definition, so comment-only changes do not report drift.
 
 Apply-owned tolerance, summarized:
 

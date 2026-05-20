@@ -106,11 +106,11 @@ func renderOwnershipComment(notice string) string {
 // renderApplyPrefix returns the full configured comment prefix that
 // Apply*WithOptions prepends to the rendered body / definition payload.
 // Render order: OwnershipNotice (apply-owned, chuck-owned marker up top),
-// DocPreamble (apply-owned), declared per-object annotation
-// (declaration-owned, closest to the payload). Each non-empty segment becomes
-// its own `/* ... */` block comment. Comment blocks are separated by a blank
-// line, and the returned prefix ends with a single newline so the payload
-// starts on the next line. When all three are empty, returns "".
+// DocPreamble (apply-owned), declared per-object annotation (closest to the
+// payload). Each non-empty segment becomes its own `/* ... */` block
+// comment. Comment blocks are separated by a blank line, and the returned
+// prefix ends with a single newline so the payload starts on the next line.
+// When all three are empty, returns "".
 func renderApplyPrefix(opts CodeObjectOptions, declaredAnnotation string) string {
 	var comments []string
 	if c := renderOwnershipComment(opts.OwnershipNotice); c != "" {
@@ -135,11 +135,11 @@ func renderApplyPrefix(opts CodeObjectOptions, declaredAnnotation string) string
 // of whether the payload starts with a SELECT keyword (views), a parameter
 // declaration (procedures), or an AS keyword (zero-parameter procedures).
 //
-// declaredAnnotation is the per-object declaration-owned doc annotation
-// (ViewDef.DocAnnotation / ProcedureDef.DocAnnotation); pass "" when not
-// declared. When non-empty it is rendered after the caller-level DocPreamble
-// (and after any OwnershipNotice) so callers reading the live SQL see
-// ownership → preamble → per-object annotation → payload.
+// declaredAnnotation is the per-object doc annotation (ViewDef.DocAnnotation /
+// ProcedureDef.DocAnnotation); pass "" when not declared. When non-empty it
+// is rendered after the caller-level DocPreamble (and after any
+// OwnershipNotice) so callers reading the live SQL see ownership → preamble
+// → per-object annotation → payload.
 func applyOwnershipNoticePrefix(payload string, opts CodeObjectOptions, declaredAnnotation string) string {
 	prefix := renderApplyPrefix(opts, declaredAnnotation)
 	if prefix == "" {

@@ -70,8 +70,7 @@ func (v *ViewDef) WithDocAnnotation(text string) *ViewDef {
 	return v
 }
 
-// DocAnnotation returns the declared declaration-owned doc annotation for the
-// view, or "" if none.
+// DocAnnotation returns the declared per-view doc annotation, or "" if none.
 func (v *ViewDef) DocAnnotation() string {
 	return v.docAnnotation
 }

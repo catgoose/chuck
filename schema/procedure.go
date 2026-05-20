@@ -92,8 +92,8 @@ func (p *ProcedureDef) WithDocAnnotation(text string) *ProcedureDef {
 	return p
 }
 
-// DocAnnotation returns the declared declaration-owned doc annotation for the
-// procedure, or "" if none.
+// DocAnnotation returns the declared per-procedure doc annotation, or "" if
+// none.
 func (p *ProcedureDef) DocAnnotation() string {
 	return p.docAnnotation
 }

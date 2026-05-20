@@ -463,8 +463,8 @@ func TestProcedureValidateApply_MSSQL(t *testing.T) {
 //   - apply-with-options injects the notice and the doc preamble into live
 //     SQL in notice-then-preamble order
 //   - validate-with-same-options strips the configured prefix and reports clean
-//   - bare ValidateView (no opts) still reports drift because the live body
-//     carries comments the declared body does not
+//   - bare ValidateView (no opts) still validates because leading
+//     comment-only front matter is ignored
 //   - bare ApplyView strips the markers; validate-with-options against the
 //     bare live body is clean (apply-owned tolerance — markers are not
 //     required to exist live)

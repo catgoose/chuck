@@ -618,7 +618,7 @@ if dialect.Engine() == chuck.MSSQL {
 - **`OwnershipNotice`** — apply-owned marker. `schema.DefaultOwnershipNotice` is intentionally soft (it says out-of-band changes "may" fail validation or be overwritten) because the `Validate*` / `Apply*` lanes are explicit and Postgres view validation is existence-only. Callers can supply any string.
 - **`DocPreamble`** — optional caller-controlled doc comment. Intended for purpose / contact / runbook links. **Not** treated as proof of ownership; it is metadata only.
 
-A third lane is **declaration-owned** and lives on the object itself:
+A third lane lives on the object itself:
 
 - **`ViewDef.WithDocAnnotation(text)` / `ProcedureDef.WithDocAnnotation(text)`** — per-object doc comment carried by the declaration. Unlike `DocPreamble` (which is shared across many objects and caller-controlled), the annotation hangs directly off the owned object and renders into the live SQL. Validation ignores leading comment-only front matter, so changing the text in code does **not** by itself produce drift.
 

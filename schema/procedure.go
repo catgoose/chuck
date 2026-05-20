@@ -82,11 +82,11 @@ func (p *ProcedureDef) Schema() string {
 
 // WithDocAnnotation attaches a per-procedure doc comment to the declaration.
 // When set, the annotation renders as a SQL block comment as part of the
-// procedure's live SQL output (between any caller-level DocPreamble and any
-// caller-level OwnershipNotice). Validation intentionally ignores leading
-// block-comment front matter, so changing this annotation does not by itself
-// produce drift. This is the per-object counterpart to
-// CodeObjectOptions.DocPreamble.
+// procedure's live SQL output, last among the leading comments (after any
+// caller-level OwnershipNotice and DocPreamble), closest to the procedure
+// definition. Validation intentionally ignores leading block-comment front
+// matter, so changing this annotation does not by itself produce drift. This
+// is the per-object counterpart to CodeObjectOptions.DocPreamble.
 func (p *ProcedureDef) WithDocAnnotation(text string) *ProcedureDef {
 	p.docAnnotation = text
 	return p

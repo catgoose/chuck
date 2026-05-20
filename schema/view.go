@@ -59,12 +59,12 @@ func (v *ViewDef) Schema() string {
 
 // WithDocAnnotation attaches a per-view doc comment to the view declaration.
 // When set, the annotation renders as a SQL block comment as part of the
-// view's live SQL output (between any caller-level DocPreamble and any
-// caller-level OwnershipNotice). Validation intentionally ignores leading
-// block-comment front matter, so changing this annotation does not by itself
-// produce drift. This is the per-object counterpart to
-// CodeObjectOptions.DocPreamble, which remains a caller-level apply-owned
-// preamble shared across many objects.
+// view's live SQL output, last among the leading comments (after any
+// caller-level OwnershipNotice and DocPreamble), closest to the SELECT body.
+// Validation intentionally ignores leading block-comment front matter, so
+// changing this annotation does not by itself produce drift. This is the
+// per-object counterpart to CodeObjectOptions.DocPreamble, which remains a
+// caller-level apply-owned preamble shared across many objects.
 func (v *ViewDef) WithDocAnnotation(text string) *ViewDef {
 	v.docAnnotation = text
 	return v

@@ -628,7 +628,7 @@ v := schema.NewView("v_open_tasks",
     WithDocAnnotation("v_open_tasks v1: returns currently-open task ids")
 ```
 
-When all three are set the rendered order is **`DocPreamble`, then per-object annotation, then `OwnershipNotice`**, then the payload. Each non-empty segment becomes its own `/* ... */` SQL block comment, with a blank line between comment blocks, and the payload starts on the next line after the final block. `Validate*WithOptions` strips configured front matter and then ignores any remaining leading block comments on both sides before comparing the executable statement body/definition, so comment-only changes do not report drift.
+When all three are set the rendered order is **`OwnershipNotice`, then `DocPreamble`, then per-object annotation**, then the payload. The chuck-owned marker sits at the top so DB readers see it first; the per-object annotation sits closest to the SQL body so it reads like a docstring on the object. Each non-empty segment becomes its own `/* ... */` SQL block comment, with a blank line between comment blocks, and the payload starts on the next line after the final block. `Validate*WithOptions` strips configured front matter and then ignores any remaining leading block comments on both sides before comparing the executable statement body/definition, so comment-only changes do not report drift.
 
 Apply-owned tolerance, summarized:
 

@@ -352,6 +352,12 @@ func applyProcedureWithOptionsInternal(ctx context.Context, db *sql.DB, d chuck.
 	if _, err := db.ExecContext(ctx, stmt); err != nil {
 		return fmt.Errorf("schema: apply procedure %q: %w", objectKey(p.Object()), err)
 	}
+	if opts.Metadata != nil {
+		hash := hashCodeObjectDefinition(definition)
+		if err := recordCodeObjectMetadata(ctx, db, d, *opts.Metadata, MetadataObjectTypeProcedure, p.Object(), hash); err != nil {
+			return fmt.Errorf("schema: record metadata for procedure %q: %w", objectKey(p.Object()), err)
+		}
+	}
 	return nil
 }
 

@@ -680,6 +680,71 @@ Engine notes:
 - **MSSQL** stores both view and procedure text verbatim in `sys.sql_modules.definition`.
 - **Postgres** `pg_get_viewdef` reconstructs the SELECT from the parse tree and discards comments, so the notice will be present in the `CREATE OR REPLACE VIEW` statement chuck issues but will not be visible when an operator reads `pg_get_viewdef` output. This does not produce false drift because Postgres view validation is existence-only (`ErrViewBodyComparisonUnsupported`).
 
+#### Opt-in snapshot operational metadata
+
+For provenance — when an owned object was first applied, last applied, last
+changed, what the current definition hashes to, and which source rev/tool
+version applied it — chuck can record one row per owned object in a small
+snapshot ledger alongside your data. The ledger is **opt-in** and **snapshot
+only**: one current row per owned object, no append-only history table in
+this first pass.
+
+```go
+cfg := schema.MetadataConfig{
+    Owner:       "bootstrap",                         // required
+    Schema:      "ops",                               // optional; ignored on SQLite
+    SourceRepo:  "https://github.com/example/repo",   // optional provenance
+    SourceRev:   commitSHA,                           // optional provenance
+    ToolVersion: "v1.4.2",                            // optional provenance
+}
+
+// Create the ledger tables once, in your own bootstrap. Chuck does NOT
+// implicitly CREATE SCHEMA for you when cfg.Schema is set.
+if err := schema.EnsureMetadataTables(ctx, db, dialect, cfg); err != nil {
+    return err
+}
+
+// Wire the ledger config into your existing CodeObjectOptions. Apply* writes
+// a row after each successful apply when Metadata is non-nil; bare apply and
+// the Validate* lane both ignore Metadata.
+opts := schema.CodeObjectOptions{
+    OwnershipNotice: schema.DefaultOwnershipNotice,
+    DocPreamble:     "bootstrap: applied by example/repo",
+    Metadata:        &cfg,
+}
+if err := schema.ApplyViewsWithOptions(ctx, db, dialect, opts, views...); err != nil {
+    return err
+}
+```
+
+Two tables are written:
+
+- **`chuck_database_metadata`** — one row per `Owner`, tracking when that
+  owner first applied anything and when it last applied anything.
+- **`chuck_object_metadata`** — one row per `(owner, object_type,
+  object_schema, object_name)` with `first_applied_at_utc`,
+  `last_applied_at_utc`, `last_changed_at_utc`, `definition_hash`, and the
+  optional `source_repo` / `source_rev` / `tool_version` provenance columns.
+
+Snapshot semantics on each successful apply:
+
+- **New row**: `first_applied = last_applied = last_changed = now`.
+- **Same hash as last apply**: only `last_applied` advances. `last_changed`
+  and `first_applied` stay frozen.
+- **Different hash**: `last_applied` and `last_changed` advance,
+  `definition_hash` is replaced, `first_applied` stays frozen.
+
+The hash is computed over the canonical form of the rendered body or
+definition — leading block-comment front matter (ownership notice, doc
+preamble, per-object annotation) is stripped before hashing. Comment-only
+changes therefore do not move `last_changed`, matching the comment-insensitive
+validation contract.
+
+The ledger is independent of drift detection: `Validate*WithOptions` does not
+read the ledger and does not produce drift over missing or stale ledger
+rows. Empty provenance fields are stored as SQL `NULL` so the ledger can
+distinguish "not recorded" from "recorded as empty string".
+
 ### Schema Snapshots
 
 Export the declared schema in structured or text format for diffing:

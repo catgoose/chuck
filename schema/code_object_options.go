@@ -79,6 +79,20 @@ type CodeObjectOptions struct {
 	// leading block-comment front matter, so absent or different leading
 	// comments follow the same comment-insensitive rules as OwnershipNotice.
 	DocPreamble string
+
+	// Metadata opts the option-aware apply path into recording an entry in
+	// chuck's snapshot operational metadata ledger after each successful
+	// view / procedure apply. When nil (the zero value) no ledger row is
+	// written and the apply path behaves identically to bare apply.
+	//
+	// Callers must run EnsureMetadataTables once before the first opt-in
+	// apply; the ledger writes assume the tables exist. The ledger is
+	// strictly apply-side in this first pass — Validate*WithOptions
+	// ignores Metadata entirely and does not compare definition hashes.
+	//
+	// Owner is required when Metadata is non-nil; an empty Owner surfaces
+	// as ErrMetadataOwnerMissing rather than recording an ambiguous row.
+	Metadata *MetadataConfig
 }
 
 // DefaultOwnershipNotice is the canonical chuck-owned ownership notice text

@@ -484,6 +484,12 @@ func applyViewWithOptionsInternal(ctx context.Context, db *sql.DB, d chuck.Diale
 			return fmt.Errorf("schema: apply view %q: %w", objectKey(v.Object()), err)
 		}
 	}
+	if opts.Metadata != nil {
+		hash := hashCodeObjectDefinition(body)
+		if err := recordCodeObjectMetadata(ctx, db, d, *opts.Metadata, MetadataObjectTypeView, v.Object(), hash); err != nil {
+			return fmt.Errorf("schema: record metadata for view %q: %w", objectKey(v.Object()), err)
+		}
+	}
 	return nil
 }
 

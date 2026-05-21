@@ -894,3 +894,87 @@ func readDatabaseMetadataRow(t *testing.T, ctx context.Context, db *sql.DB, owne
 		  WHERE owner = ?`, owner).Scan(&firstApplied, &lastApplied))
 	return firstApplied, lastApplied
 }
+
+// TestViewApplyWithOptions_SQLite_MetadataPointerInOwnershipNotice asserts the
+// metadata-pointer augmentation contract end-to-end on SQLite.
+//
+// Contract covered:
+//
+//   - ApplyViewWithOptions with both OwnershipNotice and Metadata renders a
+//     provenance pointer line inside the ownership block comment, naming the
+//     dialect-quoted chuck_object_metadata table
+//   - apply + validate with the same opts stay coherent — the strict
+//     configured-prefix strip recognises the augmented notice
+//   - bare validate (no opts) still passes because leading comment-only
+//     front matter is ignored
+//   - metadata-only (no OwnershipNotice) does NOT invent a fresh ownership
+//     block; nothing chuck-related lands in the leading comments
+//   - notice-only (no Metadata) does NOT include the provenance pointer
+func TestViewApplyWithOptions_SQLite_MetadataPointerInOwnershipNotice(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx := context.Background()
+	d := chuck.SQLiteDialect{}
+
+	_, err = db.ExecContext(ctx, `CREATE TABLE vva_ptr_tasks (id INTEGER PRIMARY KEY, done INTEGER)`)
+	require.NoError(t, err)
+	defer func() { _, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS vva_ptr_tasks`) }()
+
+	cfg := schema.MetadataConfig{
+		Owner: "bootstrap",
+		Now:   (&integrationFakeClock{cur: time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)}).Now,
+	}
+	require.NoError(t, schema.EnsureMetadataTables(ctx, db, d, cfg))
+
+	v := schema.NewView("v_vva_ptr_open", "SELECT id FROM vva_ptr_tasks WHERE done = 0")
+	defer func() { _, _ = db.ExecContext(ctx, v.DropSQL(d)) }()
+
+	// Notice + metadata: pointer line lands inside the ownership block.
+	opts := schema.CodeObjectOptions{
+		OwnershipNotice: schema.DefaultOwnershipNotice,
+		Metadata:        &cfg,
+	}
+	require.NoError(t, schema.ApplyViewWithOptions(ctx, db, d, opts, v))
+	require.NoError(t, schema.ValidateViewWithOptions(ctx, db, d, opts, v),
+		"apply + validate with same opts must be coherent against the augmented notice")
+	require.NoError(t, schema.ValidateView(ctx, db, d, v),
+		"bare validate must still pass: comment-only front matter is ignored")
+
+	var liveSQL string
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT sql FROM sqlite_master WHERE type='view' AND name=?`, "v_vva_ptr_open").
+		Scan(&liveSQL))
+	assert.Contains(t, liveSQL, `Provenance recorded in "chuck_object_metadata".`,
+		"ownership notice must carry the metadata pointer when both notice and Metadata are set")
+	assert.Contains(t, liveSQL, "Owned by https://github.com/catgoose/chuck",
+		"base ownership text must still be present")
+	noticeIdx := strings.Index(liveSQL, "Owned by https://github.com/catgoose/chuck")
+	pointerIdx := strings.Index(liveSQL, "Provenance recorded in")
+	require.True(t, noticeIdx >= 0 && pointerIdx >= 0)
+	assert.Less(t, noticeIdx, pointerIdx, "provenance pointer must follow the base notice text")
+
+	// Metadata-only (no OwnershipNotice) must NOT invent a fresh ownership
+	// block. The view is re-applied so we observe a fresh leading comment
+	// surface in sqlite_master.
+	require.NoError(t, schema.ApplyViewWithOptions(ctx, db, d,
+		schema.CodeObjectOptions{Metadata: &cfg}, v))
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT sql FROM sqlite_master WHERE type='view' AND name=?`, "v_vva_ptr_open").
+		Scan(&liveSQL))
+	assert.NotContains(t, liveSQL, "Provenance recorded in",
+		"metadata-only must not emit a provenance comment when no ownership notice rides along")
+	assert.NotContains(t, liveSQL, "Owned by https://github.com/catgoose/chuck")
+
+	// Notice-only (no Metadata): pointer must NOT be present.
+	require.NoError(t, schema.ApplyViewWithOptions(ctx, db, d,
+		schema.CodeObjectOptions{OwnershipNotice: schema.DefaultOwnershipNotice}, v))
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT sql FROM sqlite_master WHERE type='view' AND name=?`, "v_vva_ptr_open").
+		Scan(&liveSQL))
+	assert.Contains(t, liveSQL, "Owned by https://github.com/catgoose/chuck",
+		"notice-only must still emit the base ownership notice")
+	assert.NotContains(t, liveSQL, "Provenance recorded in",
+		"notice-only must not carry a metadata pointer when no ledger is enabled")
+}

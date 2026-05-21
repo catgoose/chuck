@@ -224,6 +224,39 @@ func recordCodeObjectMetadata(
 	return upsertDatabaseRow(ctx, db, d, cfg, now)
 }
 
+// metadataNoticePointer returns the single-line ledger pointer sentence the
+// ownership-notice augmentation appends to the rendered chuck-owned comment
+// when snapshot metadata is enabled. The pointer references the dialect-
+// qualified, quoted form of the chuck_object_metadata table so DB readers
+// reading the live SQL can jump straight to the ledger row that records
+// this object's provenance. SQLite drops the schema component per the
+// standard QualifyTable contract; Postgres / MSSQL render schema-qualified
+// when cfg.Schema is set and bare otherwise.
+//
+// Lives next to MetadataConfig so the table-name rendering stays close to
+// the ledger's own DDL.
+func metadataNoticePointer(d chuck.Dialect, cfg MetadataConfig) string {
+	return "Provenance recorded in " + qualifyTable(d, cfg.objectMetadataObject()) + "."
+}
+
+// effectiveOptionsForRender returns opts with OwnershipNotice augmented by a
+// metadata-ledger pointer line when both OwnershipNotice is non-empty and
+// opts.Metadata is non-nil. Apply and validate paths both call this so the
+// rendered comment text and the strict-strip configured-prefix recognition
+// stay symmetric — what apply writes, the validate strict-strip sees and
+// removes intact rather than relying on the broader leading-comment strip.
+//
+// When OwnershipNotice is empty no pointer is added: the contract is that a
+// metadata pointer rides along with an existing ownership notice rather than
+// inventing a fresh ownership block on metadata's behalf.
+func effectiveOptionsForRender(d chuck.Dialect, opts CodeObjectOptions) CodeObjectOptions {
+	if opts.OwnershipNotice == "" || opts.Metadata == nil {
+		return opts
+	}
+	opts.OwnershipNotice = opts.OwnershipNotice + "\n" + metadataNoticePointer(d, *opts.Metadata)
+	return opts
+}
+
 // metadataObjectColumns returns the (object_schema, object_name) pair used to
 // key chuck_object_metadata rows for the given owned object. The schema
 // component reuses the same default-resolution contract as the live-database

@@ -745,6 +745,27 @@ read the ledger and does not produce drift over missing or stale ledger
 rows. Empty provenance fields are stored as SQL `NULL` so the ledger can
 distinguish "not recorded" from "recorded as empty string".
 
+When `OwnershipNotice` and `Metadata` are both set, the rendered chuck-owned
+ownership comment carries an extra single-line pointer to the ledger so DB
+readers inspecting the live view or procedure can jump straight to the row
+that records its provenance:
+
+```sql
+CREATE VIEW "v_open_tasks" AS
+/* Owned by https://github.com/catgoose/chuck. Do not edit in database.
+Out-of-band changes may fail validation or be overwritten by apply/bootstrap.
+Provenance recorded in "ops"."chuck_object_metadata". */
+SELECT id FROM tasks WHERE done = 0
+```
+
+The pointer uses the dialect-quoted, schema-qualified form of
+`chuck_object_metadata` (bare on SQLite; bracketed on MSSQL; double-quoted
+on Postgres). It is only added when an ownership notice is already
+rendering — `Metadata` alone never invents a fresh ownership block — and is
+omitted when `Metadata` is `nil`, so the pointer text stays honest about
+whether the ledger is actually enabled. Comment-only changes do not move
+`last_changed` and do not produce drift.
+
 ### Schema Snapshots
 
 Export the declared schema in structured or text format for diffing:

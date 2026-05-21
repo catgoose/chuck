@@ -19,12 +19,41 @@ func SoftDeleteColumnDefs() []ColumnDef {
 	}
 }
 
-// AuditColumnDefs returns CreatedBy, UpdatedBy, and DeletedBy columns.
-func AuditColumnDefs() []ColumnDef {
-	return []ColumnDef{
-		Col("CreatedBy", TypeString(255)).Immutable(),
-		Col("UpdatedBy", TypeString(255)),
-		Col("DeletedBy", TypeString(255)),
+// AuditTrailSpec carries the explicit ColumnDefs the audit trail trait
+// appends to a TableDef. Each field is the caller's own ColumnDef, including
+// type, nullability, default, and mutability — chuck does not silently
+// override any of them. Callers that want the historical string-based shape
+// should use DefaultStringAuditTrail; integer/UUID/FK-style actor columns
+// just pass a ColumnDef built with the caller's chosen type and constraints.
+//
+// The created-by column is intentionally not forced immutable here; the
+// caller's ColumnDef wins. Presets that want the historical "created-by is
+// frozen at insert time" behavior should call .Immutable() themselves
+// (DefaultStringAuditTrail does).
+type AuditTrailSpec struct {
+	CreatedBy ColumnDef
+	UpdatedBy ColumnDef
+	DeletedBy ColumnDef
+}
+
+// AuditColumnDefs returns the CreatedBy / UpdatedBy / DeletedBy ColumnDefs
+// from the spec, in the order the audit trait appends them to a TableDef.
+func AuditColumnDefs(spec AuditTrailSpec) []ColumnDef {
+	return []ColumnDef{spec.CreatedBy, spec.UpdatedBy, spec.DeletedBy}
+}
+
+// DefaultStringAuditTrail returns the historical chuck audit shape: three
+// VARCHAR(255) actor columns named CreatedBy / UpdatedBy / DeletedBy, with
+// CreatedBy marked Immutable() so it is frozen at insert time and UpdatedBy /
+// DeletedBy left mutable. Use this when the caller stores actor identity as
+// a free-form string (username, email, opaque id) and wants the original
+// chuck defaults. Callers wanting typed actor identity (e.g. UserID INT
+// referencing Users) should build their own AuditTrailSpec.
+func DefaultStringAuditTrail() AuditTrailSpec {
+	return AuditTrailSpec{
+		CreatedBy: Col("CreatedBy", TypeString(255)).Immutable(),
+		UpdatedBy: Col("UpdatedBy", TypeString(255)),
+		DeletedBy: Col("DeletedBy", TypeString(255)),
 	}
 }
 

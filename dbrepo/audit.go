@@ -41,28 +41,35 @@ func SetSoftDelete(deletedAt *time.Time) {
 	}
 }
 
-// SetDeleteAudit sets DeletedAt and DeletedBy for a soft-delete with audit trail.
-func SetDeleteAudit(deletedAt *time.Time, deletedBy *string, user string) {
+// SetDeleteAudit sets DeletedAt to the current time and writes the actor
+// into deletedBy for a soft-delete with audit trail. T is the caller's
+// actor-identity type (string, int64, uuid.UUID, etc). Both pointers are
+// nil-safe and skipped when nil.
+func SetDeleteAudit[T any](deletedAt *time.Time, deletedBy *T, actor T) {
 	SetSoftDelete(deletedAt)
 	if deletedBy != nil {
-		*deletedBy = user
+		*deletedBy = actor
 	}
 }
 
-// SetCreateAudit sets CreatedBy and UpdatedBy for a new record.
-func SetCreateAudit(createdBy, updatedBy *string, user string) {
+// SetCreateAudit writes the actor into createdBy and updatedBy for a new
+// record. T is the caller's actor-identity type (string, int64, uuid.UUID,
+// etc). Each pointer is nil-safe and skipped when nil.
+func SetCreateAudit[T any](createdBy, updatedBy *T, actor T) {
 	if createdBy != nil {
-		*createdBy = user
+		*createdBy = actor
 	}
 	if updatedBy != nil {
-		*updatedBy = user
+		*updatedBy = actor
 	}
 }
 
-// SetUpdateAudit sets UpdatedBy for an updated record.
-func SetUpdateAudit(updatedBy *string, user string) {
+// SetUpdateAudit writes the actor into updatedBy for an updated record.
+// T is the caller's actor-identity type. The pointer is nil-safe and
+// skipped when nil.
+func SetUpdateAudit[T any](updatedBy *T, actor T) {
 	if updatedBy != nil {
-		*updatedBy = user
+		*updatedBy = actor
 	}
 }
 

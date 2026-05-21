@@ -156,6 +156,93 @@ func TestRecordCodeObjectMetadata_NilProvenanceWritesNull_SQLite(t *testing.T) {
 	assert.False(t, row.toolVersion.Valid, "empty ToolVersion must write SQL NULL")
 }
 
+func TestMetadataObjectColumns_DefaultsMatchLiveInspectionSchema(t *testing.T) {
+	cases := []struct {
+		name       string
+		dialect    chuck.Dialect
+		obj        chuck.ObjectName
+		wantSchema string
+		wantName   string
+	}{
+		{
+			name:       "sqlite unqualified records empty schema",
+			dialect:    chuck.SQLiteDialect{},
+			obj:        chuck.ObjectName{Name: "v_open_tasks"},
+			wantSchema: "",
+			wantName:   "v_open_tasks",
+		},
+		{
+			name:       "sqlite drops declared schema (no namespace on engine)",
+			dialect:    chuck.SQLiteDialect{},
+			obj:        chuck.ObjectName{Schema: "ignored", Name: "v_open_tasks"},
+			wantSchema: "",
+			wantName:   "v_open_tasks",
+		},
+		{
+			name:       "postgres unqualified resolves to public (live default)",
+			dialect:    chuck.PostgresDialect{},
+			obj:        chuck.ObjectName{Name: "v_open_tasks"},
+			wantSchema: "public",
+			wantName:   "v_open_tasks",
+		},
+		{
+			name:       "postgres explicit schema wins unchanged",
+			dialect:    chuck.PostgresDialect{},
+			obj:        chuck.ObjectName{Schema: "reporting", Name: "v_open_tasks"},
+			wantSchema: "reporting",
+			wantName:   "v_open_tasks",
+		},
+		{
+			name:       "mssql unqualified resolves to dbo (live default)",
+			dialect:    chuck.MSSQLDialect{},
+			obj:        chuck.ObjectName{Name: "v_OpenTasks"},
+			wantSchema: "dbo",
+			wantName:   "v_OpenTasks",
+		},
+		{
+			name:       "mssql explicit schema wins unchanged",
+			dialect:    chuck.MSSQLDialect{},
+			obj:        chuck.ObjectName{Schema: "sg", Name: "v_OpenTasks"},
+			wantSchema: "sg",
+			wantName:   "v_OpenTasks",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotSchema, gotName := metadataObjectColumns(tc.dialect, tc.obj)
+			assert.Equal(t, tc.wantSchema, gotSchema, "object_schema")
+			assert.Equal(t, tc.wantName, gotName, "object_name")
+		})
+	}
+}
+
+func TestRecordCodeObjectMetadata_UnqualifiedRowKeyedByEmptySchema_SQLite(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx := context.Background()
+	d := chuck.SQLiteDialect{}
+
+	cfg := MetadataConfig{
+		Owner: "schema-keying",
+		Now:   newFakeClock(time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)).Now,
+	}
+	require.NoError(t, EnsureMetadataTables(ctx, db, d, cfg))
+
+	obj := chuck.ObjectName{Name: "v_keying"}
+	require.NoError(t, recordCodeObjectMetadata(ctx, db, d, cfg, MetadataObjectTypeView, obj, "h"))
+
+	var storedSchema, storedName string
+	err = db.QueryRowContext(ctx,
+		`SELECT object_schema, object_name FROM `+DefaultObjectMetadataTableName+
+			` WHERE owner = ? AND object_name = ?`, cfg.Owner, "v_keying").
+		Scan(&storedSchema, &storedName)
+	require.NoError(t, err)
+	assert.Equal(t, "", storedSchema, "SQLite must continue recording empty object_schema")
+	assert.Equal(t, "v_keying", storedName)
+}
+
 func TestMetadataCreateStatements_AllDialectsRender(t *testing.T) {
 	cfg := MetadataConfig{Owner: "test"}
 	dialects := []chuck.Dialect{
@@ -227,7 +314,7 @@ func readObjectRow(
 	obj chuck.ObjectName,
 ) objectMetadataRow {
 	t.Helper()
-	schemaCol, nameCol := normalizedObject(d, obj)
+	schemaCol, nameCol := metadataObjectColumns(d, obj)
 	q := `SELECT first_applied_at_utc, last_applied_at_utc, last_changed_at_utc,
 	             definition_hash, source_repo, source_rev, tool_version
 	      FROM ` + DefaultObjectMetadataTableName + `

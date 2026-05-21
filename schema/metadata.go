@@ -217,11 +217,31 @@ func recordCodeObjectMetadata(
 		return err
 	}
 	now := cfg.clock().UTC()
-	schemaCol, nameCol := normalizedObject(d, obj)
+	schemaCol, nameCol := metadataObjectColumns(d, obj)
 	if err := upsertObjectRow(ctx, db, d, cfg, objectType, schemaCol, nameCol, definitionHash, now); err != nil {
 		return err
 	}
 	return upsertDatabaseRow(ctx, db, d, cfg, now)
+}
+
+// metadataObjectColumns returns the (object_schema, object_name) pair used to
+// key chuck_object_metadata rows for the given owned object. The schema
+// component reuses the same default-resolution contract as the live-database
+// inspection paths (resolveSchemaForInspection): unqualified declarations
+// resolve to "public" on Postgres and "dbo" on MSSQL so the ledger row keys
+// match where the live object physically lives, while SQLite continues to
+// record an empty schema because SQLite has no schema namespace. The name
+// component is dialect-normalized identically to inspection.
+//
+// Without this resolution an unqualified declaration on Postgres or MSSQL
+// would record object_schema="" even though the live object lives under
+// "public" / "dbo". That would misstate identity and split one physical
+// object across two ledger rows if a caller later switched from a bare name
+// to the explicit default schema.
+func metadataObjectColumns(d chuck.Dialect, obj chuck.ObjectName) (objectSchema, objectName string) {
+	_, objectName = normalizedObject(d, obj)
+	objectSchema = resolveSchemaForInspection(d, obj)
+	return
 }
 
 // upsertObjectRow performs the read-then-write for chuck_object_metadata.

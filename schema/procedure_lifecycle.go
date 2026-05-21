@@ -216,7 +216,8 @@ func validateProcedureWithOptionsInternal(ctx context.Context, db *sql.DB, d chu
 			Reason:  "procedure does not exist",
 		})
 	} else {
-		liveStripped := stripLeadingBlockComments(stripConfiguredApplyPrefix(live, opts, p.DocAnnotation()))
+		effOpts := effectiveOptionsForRender(d, opts)
+		liveStripped := stripLeadingBlockComments(stripConfiguredApplyPrefix(live, effOpts, p.DocAnnotation()))
 		declaredCanon := canonicalizeStatement(stripLeadingBlockComments(p.Definition()))
 		liveCanon := canonicalizeStatement(liveStripped)
 		if declaredCanon != liveCanon {
@@ -344,7 +345,8 @@ func applyProcedureWithOptionsInternal(ctx context.Context, db *sql.DB, d chuck.
 			return fmt.Errorf("schema: drop replaced procedure %q: %w", key, err)
 		}
 	}
-	definition := applyOwnershipNoticePrefix(p.Definition(), opts, p.DocAnnotation())
+	effOpts := effectiveOptionsForRender(d, opts)
+	definition := applyOwnershipNoticePrefix(p.Definition(), effOpts, p.DocAnnotation())
 	stmt, err := p.createOrAlterWithDefinition(d, definition)
 	if err != nil {
 		return err

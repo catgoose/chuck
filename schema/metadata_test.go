@@ -156,6 +156,97 @@ func TestRecordCodeObjectMetadata_NilProvenanceWritesNull_SQLite(t *testing.T) {
 	assert.False(t, row.toolVersion.Valid, "empty ToolVersion must write SQL NULL")
 }
 
+func TestMetadataNoticePointer_QualifiesAcrossDialects(t *testing.T) {
+	cases := []struct {
+		name    string
+		dialect chuck.Dialect
+		schema  string
+		want    string
+	}{
+		{
+			name:    "sqlite drops schema even when configured",
+			dialect: chuck.SQLiteDialect{},
+			schema:  "ops",
+			want:    `Provenance recorded in "chuck_object_metadata".`,
+		},
+		{
+			name:    "sqlite bare unqualified",
+			dialect: chuck.SQLiteDialect{},
+			schema:  "",
+			want:    `Provenance recorded in "chuck_object_metadata".`,
+		},
+		{
+			name:    "postgres unqualified renders bare",
+			dialect: chuck.PostgresDialect{},
+			schema:  "",
+			want:    `Provenance recorded in "chuck_object_metadata".`,
+		},
+		{
+			name:    "postgres explicit schema renders qualified",
+			dialect: chuck.PostgresDialect{},
+			schema:  "ops",
+			want:    `Provenance recorded in "ops"."chuck_object_metadata".`,
+		},
+		{
+			name:    "mssql unqualified renders bracketed bare",
+			dialect: chuck.MSSQLDialect{},
+			schema:  "",
+			want:    `Provenance recorded in [chuck_object_metadata].`,
+		},
+		{
+			name:    "mssql explicit schema renders bracketed qualified",
+			dialect: chuck.MSSQLDialect{},
+			schema:  "ops",
+			want:    `Provenance recorded in [ops].[chuck_object_metadata].`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := MetadataConfig{Owner: "t", Schema: tc.schema}
+			assert.Equal(t, tc.want, metadataNoticePointer(tc.dialect, cfg))
+		})
+	}
+}
+
+func TestEffectiveOptionsForRender_AugmentsOnlyWhenNoticeAndMetadataBothSet(t *testing.T) {
+	d := chuck.SQLiteDialect{}
+	cfg := MetadataConfig{Owner: "t"}
+
+	t.Run("both nil-like: opts unchanged", func(t *testing.T) {
+		opts := CodeObjectOptions{}
+		got := effectiveOptionsForRender(d, opts)
+		assert.Equal(t, "", got.OwnershipNotice)
+		assert.Nil(t, got.Metadata)
+	})
+
+	t.Run("notice set, metadata nil: opts unchanged", func(t *testing.T) {
+		opts := CodeObjectOptions{OwnershipNotice: "owned"}
+		got := effectiveOptionsForRender(d, opts)
+		assert.Equal(t, "owned", got.OwnershipNotice, "notice unchanged when no metadata pointer to add")
+	})
+
+	t.Run("notice empty, metadata set: opts unchanged (no fresh ownership block invented)", func(t *testing.T) {
+		opts := CodeObjectOptions{Metadata: &cfg}
+		got := effectiveOptionsForRender(d, opts)
+		assert.Equal(t, "", got.OwnershipNotice, "metadata alone must not invent an OwnershipNotice")
+	})
+
+	t.Run("both set: notice augmented with provenance pointer", func(t *testing.T) {
+		opts := CodeObjectOptions{OwnershipNotice: "owned", Metadata: &cfg}
+		got := effectiveOptionsForRender(d, opts)
+		assert.Equal(t,
+			"owned\nProvenance recorded in \"chuck_object_metadata\".",
+			got.OwnershipNotice)
+	})
+
+	t.Run("does not mutate caller's CodeObjectOptions value", func(t *testing.T) {
+		opts := CodeObjectOptions{OwnershipNotice: "owned", Metadata: &cfg}
+		_ = effectiveOptionsForRender(d, opts)
+		assert.Equal(t, "owned", opts.OwnershipNotice,
+			"caller's opts must remain unchanged — effective opts is a value copy")
+	})
+}
+
 func TestMetadataObjectColumns_DefaultsMatchLiveInspectionSchema(t *testing.T) {
 	cases := []struct {
 		name       string

@@ -365,7 +365,8 @@ func validateViewWithOptionsInternal(ctx context.Context, db *sql.DB, d chuck.Di
 			Reason:                "pg_get_viewdef canonicalization (star expansion, fully-qualified identifiers, inserted casts) makes textual body comparison unreliable; existence confirmed",
 		})
 	default:
-		liveStripped := stripLeadingBlockComments(stripConfiguredApplyPrefix(live, opts, v.DocAnnotation()))
+		effOpts := effectiveOptionsForRender(d, opts)
+		liveStripped := stripLeadingBlockComments(stripConfiguredApplyPrefix(live, effOpts, v.DocAnnotation()))
 		declaredCanon := canonicalizeStatement(stripLeadingBlockComments(v.Body()))
 		liveCanon := canonicalizeStatement(liveStripped)
 		if declaredCanon != liveCanon {
@@ -478,7 +479,8 @@ func applyViewWithOptionsInternal(ctx context.Context, db *sql.DB, d chuck.Diale
 			return fmt.Errorf("schema: drop replaced view %q: %w", key, err)
 		}
 	}
-	body := applyOwnershipNoticePrefix(v.Body(), opts, v.DocAnnotation())
+	effOpts := effectiveOptionsForRender(d, opts)
+	body := applyOwnershipNoticePrefix(v.Body(), effOpts, v.DocAnnotation())
 	for _, stmt := range v.createOrReplaceWithBody(d, body) {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("schema: apply view %q: %w", objectKey(v.Object()), err)

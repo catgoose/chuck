@@ -683,22 +683,19 @@ Engine notes:
 #### Opt-in snapshot operational metadata
 
 For provenance — when an owned object was first applied, last applied, last
-changed, what the current definition hashes to, and which source rev/tool
-version applied it — chuck can record one row per owned object in a small
-snapshot ledger alongside your data. The ledger is **opt-in** and **snapshot
-only**: one current row per owned object, no append-only history table in
-this first pass.
+changed, and what the current definition hashes to — chuck can record one row
+per owned object in a small snapshot ledger alongside your data. The ledger
+is **opt-in**, **snapshot only**, and **object-only**: one current row per
+owned object, no append-only history table, and no database-level summary
+table in chuck core.
 
 ```go
 cfg := schema.MetadataConfig{
-    Owner:       "bootstrap",                         // required
-    Schema:      "ops",                               // optional; ignored on SQLite
-    SourceRepo:  "https://github.com/example/repo",   // optional provenance
-    SourceRev:   commitSHA,                           // optional provenance
-    ToolVersion: "v1.4.2",                            // optional provenance
+    Owner:  "bootstrap",   // required
+    Schema: "ops",         // optional; ignored on SQLite
 }
 
-// Create the ledger tables once, in your own bootstrap. Chuck does NOT
+// Create the ledger table once, in your own bootstrap. Chuck does NOT
 // implicitly CREATE SCHEMA for you when cfg.Schema is set.
 if err := schema.EnsureMetadataTables(ctx, db, dialect, cfg); err != nil {
     return err
@@ -717,33 +714,36 @@ if err := schema.ApplyViewsWithOptions(ctx, db, dialect, opts, views...); err !=
 }
 ```
 
-Two tables are written:
+One table is written:
 
-- **`chuck_database_metadata`** — one row per `Owner`, tracking when that
-  owner first applied anything and when it last applied anything.
-- **`chuck_object_metadata`** — one row per `(owner, object_type,
-  object_schema, object_name)` with `first_applied_at_utc`,
-  `last_applied_at_utc`, `last_changed_at_utc`, `definition_hash`, and the
-  optional `source_repo` / `source_rev` / `tool_version` provenance columns.
+- **`ChuckObjectMetadata`** — one row per
+  `(Owner, ObjectType, ObjectSchema, ObjectName)` with `FirstAppliedAtUtc`,
+  `LastAppliedAtUtc`, `LastChangedAtUtc`, and `DefinitionHash`.
+
+Naming is fixed PascalCase in chuck core. Richer or app-specific provenance
+(source repo, commit SHA, tool version, environment, ticket, request id, …)
+belongs in a caller-owned sibling table outside chuck — keep the chuck core
+ledger a small, stable object-only contract and let your application table
+join to it on `(Owner, ObjectType, ObjectSchema, ObjectName)` when you need
+extra columns.
 
 Snapshot semantics on each successful apply:
 
-- **New row**: `first_applied = last_applied = last_changed = now`.
-- **Same hash as last apply**: only `last_applied` advances. `last_changed`
-  and `first_applied` stay frozen.
-- **Different hash**: `last_applied` and `last_changed` advance,
-  `definition_hash` is replaced, `first_applied` stays frozen.
+- **New row**: `FirstAppliedAtUtc = LastAppliedAtUtc = LastChangedAtUtc = now`.
+- **Same hash as last apply**: only `LastAppliedAtUtc` advances.
+  `LastChangedAtUtc` and `FirstAppliedAtUtc` stay frozen.
+- **Different hash**: `LastAppliedAtUtc` and `LastChangedAtUtc` advance,
+  `DefinitionHash` is replaced, `FirstAppliedAtUtc` stays frozen.
 
 The hash is computed over the canonical form of the rendered body or
 definition — leading block-comment front matter (ownership notice, doc
 preamble, per-object annotation) is stripped before hashing. Comment-only
-changes therefore do not move `last_changed`, matching the comment-insensitive
-validation contract.
+changes therefore do not move `LastChangedAtUtc`, matching the
+comment-insensitive validation contract.
 
 The ledger is independent of drift detection: `Validate*WithOptions` does not
 read the ledger and does not produce drift over missing or stale ledger
-rows. Empty provenance fields are stored as SQL `NULL` so the ledger can
-distinguish "not recorded" from "recorded as empty string".
+rows.
 
 When `OwnershipNotice` and `Metadata` are both set, the rendered chuck-owned
 ownership comment carries an extra single-line pointer to the ledger so DB
@@ -754,17 +754,17 @@ that records its provenance:
 CREATE VIEW "v_open_tasks" AS
 /* Owned by https://github.com/catgoose/chuck. Do not edit in database.
 Out-of-band changes may fail validation or be overwritten by apply/bootstrap.
-Provenance recorded in "ops"."chuck_object_metadata". */
+Provenance recorded in "ops"."ChuckObjectMetadata". */
 SELECT id FROM tasks WHERE done = 0
 ```
 
 The pointer uses the dialect-quoted, schema-qualified form of
-`chuck_object_metadata` (bare on SQLite; bracketed on MSSQL; double-quoted
-on Postgres). It is only added when an ownership notice is already
-rendering — `Metadata` alone never invents a fresh ownership block — and is
-omitted when `Metadata` is `nil`, so the pointer text stays honest about
-whether the ledger is actually enabled. Comment-only changes do not move
-`last_changed` and do not produce drift.
+`ChuckObjectMetadata` (double-quoted on SQLite and Postgres; bracketed on
+MSSQL). It is only added when an ownership notice is already rendering —
+`Metadata` alone never invents a fresh ownership block — and is omitted when
+`Metadata` is `nil`, so the pointer text stays honest about whether the
+ledger is actually enabled. Comment-only changes do not move
+`LastChangedAtUtc` and do not produce drift.
 
 ### Schema Snapshots
 

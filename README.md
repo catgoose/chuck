@@ -284,7 +284,7 @@ Traits add columns and behavior in one call. They're composable -- use as many o
 | --------------------- | ------------------------------------- | ---------------------------------- |
 | `WithTimestamps()`    | `CreatedAt` (immutable), `UpdatedAt`  | Creation and modification tracking |
 | `WithSoftDelete()`    | `DeletedAt`                           | Soft delete (nullable timestamp)   |
-| `WithAuditTrail(spec)`| `CreatedBy`, `UpdatedBy`, `DeletedBy` | Actor attribution (spec-driven)    |
+| `WithAuditTrail(spec)`| Caller-supplied actor columns         | Actor attribution (spec-driven)    |
 | `WithVersion()`       | `Version` (default 1)                 | Optimistic concurrency control     |
 | `WithStatus(default)` | `Status`                              | Workflow state                     |
 | `WithSortOrder()`     | `SortOrder`                           | Manual ordering                    |

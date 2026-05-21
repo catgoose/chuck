@@ -29,7 +29,7 @@ func TestEnsureMetadataTables_RequiresOwner(t *testing.T) {
 		"empty Owner must surface as ErrMetadataOwnerMissing")
 }
 
-func TestEnsureMetadataTables_CreatesBothTables_SQLite(t *testing.T) {
+func TestEnsureMetadataTables_CreatesObjectTable_SQLite(t *testing.T) {
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err)
 	defer db.Close()
@@ -40,17 +40,20 @@ func TestEnsureMetadataTables_CreatesBothTables_SQLite(t *testing.T) {
 
 	require.NoError(t, EnsureMetadataTables(ctx, db, d, cfg))
 
-	for _, name := range []string{
-		DefaultDatabaseMetadataTableName,
-		DefaultObjectMetadataTableName,
-	} {
-		var got string
-		err := db.QueryRowContext(ctx,
-			`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, name).
-			Scan(&got)
-		require.NoError(t, err, "expected table %q to exist", name)
-		assert.Equal(t, name, got)
-	}
+	var got string
+	err = db.QueryRowContext(ctx,
+		`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, DefaultObjectMetadataTableName).
+		Scan(&got)
+	require.NoError(t, err, "expected ChuckObjectMetadata to exist")
+	assert.Equal(t, DefaultObjectMetadataTableName, got)
+
+	// Slim ledger: no database-level table is created.
+	var legacy string
+	err = db.QueryRowContext(ctx,
+		`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, "chuck_database_metadata").
+		Scan(&legacy)
+	assert.ErrorIs(t, err, sql.ErrNoRows,
+		"chuck_database_metadata must not be created — feature shrunk to object-only core")
 
 	require.NoError(t, EnsureMetadataTables(ctx, db, d, cfg),
 		"second invocation must be a no-op (CREATE TABLE IF NOT EXISTS)")
@@ -85,11 +88,8 @@ func TestRecordCodeObjectMetadata_SnapshotSemantics_SQLite(t *testing.T) {
 
 	clock := newFakeClock(time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC))
 	cfg := MetadataConfig{
-		Owner:       "owner-a",
-		SourceRepo:  "https://github.com/catgoose/chuck",
-		SourceRev:   "deadbeef",
-		ToolVersion: "v0.0.1-test",
-		Now:         clock.Now,
+		Owner: "owner-a",
+		Now:   clock.Now,
 	}
 	require.NoError(t, EnsureMetadataTables(ctx, db, d, cfg))
 
@@ -101,59 +101,28 @@ func TestRecordCodeObjectMetadata_SnapshotSemantics_SQLite(t *testing.T) {
 	require.NoError(t, recordCodeObjectMetadata(ctx, db, d, cfg, MetadataObjectTypeView, obj, hash1))
 	row := readObjectRow(t, ctx, db, d, cfg, MetadataObjectTypeView, obj)
 	t0 := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
-	assert.True(t, row.firstApplied.Equal(t0), "first apply: first_applied = t0, got %v", row.firstApplied)
+	assert.True(t, row.firstApplied.Equal(t0), "first apply: FirstAppliedAtUtc = t0, got %v", row.firstApplied)
 	assert.True(t, row.lastApplied.Equal(t0))
 	assert.True(t, row.lastChanged.Equal(t0))
 	assert.Equal(t, hash1, row.definitionHash)
-	assert.Equal(t, "https://github.com/catgoose/chuck", row.sourceRepo.String)
-	assert.Equal(t, "deadbeef", row.sourceRev.String)
-	assert.Equal(t, "v0.0.1-test", row.toolVersion.String)
 
-	// Second apply, same hash: last_applied advances, last_changed unchanged.
+	// Second apply, same hash: LastAppliedAtUtc advances, LastChangedAtUtc unchanged.
 	clock.Advance(time.Hour)
 	require.NoError(t, recordCodeObjectMetadata(ctx, db, d, cfg, MetadataObjectTypeView, obj, hash1))
 	row = readObjectRow(t, ctx, db, d, cfg, MetadataObjectTypeView, obj)
-	assert.True(t, row.firstApplied.Equal(t0), "second apply same-hash: first_applied frozen")
-	assert.True(t, row.lastApplied.Equal(t0.Add(time.Hour)), "last_applied advances")
-	assert.True(t, row.lastChanged.Equal(t0), "last_changed unchanged when hash matches")
+	assert.True(t, row.firstApplied.Equal(t0), "second apply same-hash: FirstAppliedAtUtc frozen")
+	assert.True(t, row.lastApplied.Equal(t0.Add(time.Hour)), "LastAppliedAtUtc advances")
+	assert.True(t, row.lastChanged.Equal(t0), "LastChangedAtUtc unchanged when hash matches")
 
-	// Third apply, different hash: last_applied AND last_changed advance,
-	// first_applied still frozen at t0.
+	// Third apply, different hash: LastAppliedAtUtc AND LastChangedAtUtc
+	// advance, FirstAppliedAtUtc still frozen at t0.
 	clock.Advance(time.Hour)
 	require.NoError(t, recordCodeObjectMetadata(ctx, db, d, cfg, MetadataObjectTypeView, obj, hash2))
 	row = readObjectRow(t, ctx, db, d, cfg, MetadataObjectTypeView, obj)
-	assert.True(t, row.firstApplied.Equal(t0), "third apply: first_applied still frozen")
+	assert.True(t, row.firstApplied.Equal(t0), "third apply: FirstAppliedAtUtc still frozen")
 	assert.True(t, row.lastApplied.Equal(t0.Add(2*time.Hour)))
-	assert.True(t, row.lastChanged.Equal(t0.Add(2*time.Hour)), "last_changed must advance on hash change")
+	assert.True(t, row.lastChanged.Equal(t0.Add(2*time.Hour)), "LastChangedAtUtc must advance on hash change")
 	assert.Equal(t, hash2, row.definitionHash)
-
-	// Database row tracks first/last apply too.
-	dbRow := readDatabaseRow(t, ctx, db, d, cfg)
-	assert.True(t, dbRow.firstApplied.Equal(t0), "database first_applied frozen at first record")
-	assert.True(t, dbRow.lastApplied.Equal(t0.Add(2*time.Hour)))
-}
-
-func TestRecordCodeObjectMetadata_NilProvenanceWritesNull_SQLite(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	d := chuck.SQLiteDialect{}
-
-	cfg := MetadataConfig{
-		Owner: "owner-b",
-		Now:   newFakeClock(time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)).Now,
-	}
-	require.NoError(t, EnsureMetadataTables(ctx, db, d, cfg))
-
-	obj := chuck.ObjectName{Name: "v_null_provenance"}
-	require.NoError(t, recordCodeObjectMetadata(ctx, db, d, cfg, MetadataObjectTypeView, obj, "h"))
-
-	row := readObjectRow(t, ctx, db, d, cfg, MetadataObjectTypeView, obj)
-	assert.False(t, row.sourceRepo.Valid, "empty SourceRepo must write SQL NULL")
-	assert.False(t, row.sourceRev.Valid, "empty SourceRev must write SQL NULL")
-	assert.False(t, row.toolVersion.Valid, "empty ToolVersion must write SQL NULL")
 }
 
 func TestMetadataNoticePointer_QualifiesAcrossDialects(t *testing.T) {
@@ -167,37 +136,37 @@ func TestMetadataNoticePointer_QualifiesAcrossDialects(t *testing.T) {
 			name:    "sqlite drops schema even when configured",
 			dialect: chuck.SQLiteDialect{},
 			schema:  "ops",
-			want:    `Provenance recorded in "chuck_object_metadata".`,
+			want:    `Provenance recorded in "ChuckObjectMetadata".`,
 		},
 		{
 			name:    "sqlite bare unqualified",
 			dialect: chuck.SQLiteDialect{},
 			schema:  "",
-			want:    `Provenance recorded in "chuck_object_metadata".`,
+			want:    `Provenance recorded in "ChuckObjectMetadata".`,
 		},
 		{
 			name:    "postgres unqualified renders bare",
 			dialect: chuck.PostgresDialect{},
 			schema:  "",
-			want:    `Provenance recorded in "chuck_object_metadata".`,
+			want:    `Provenance recorded in "ChuckObjectMetadata".`,
 		},
 		{
 			name:    "postgres explicit schema renders qualified",
 			dialect: chuck.PostgresDialect{},
 			schema:  "ops",
-			want:    `Provenance recorded in "ops"."chuck_object_metadata".`,
+			want:    `Provenance recorded in "ops"."ChuckObjectMetadata".`,
 		},
 		{
 			name:    "mssql unqualified renders bracketed bare",
 			dialect: chuck.MSSQLDialect{},
 			schema:  "",
-			want:    `Provenance recorded in [chuck_object_metadata].`,
+			want:    `Provenance recorded in [ChuckObjectMetadata].`,
 		},
 		{
 			name:    "mssql explicit schema renders bracketed qualified",
 			dialect: chuck.MSSQLDialect{},
 			schema:  "ops",
-			want:    `Provenance recorded in [ops].[chuck_object_metadata].`,
+			want:    `Provenance recorded in [ops].[ChuckObjectMetadata].`,
 		},
 	}
 	for _, tc := range cases {
@@ -235,7 +204,7 @@ func TestEffectiveOptionsForRender_AugmentsOnlyWhenNoticeAndMetadataBothSet(t *t
 		opts := CodeObjectOptions{OwnershipNotice: "owned", Metadata: &cfg}
 		got := effectiveOptionsForRender(d, opts)
 		assert.Equal(t,
-			"owned\nProvenance recorded in \"chuck_object_metadata\".",
+			"owned\nProvenance recorded in \"ChuckObjectMetadata\".",
 			got.OwnershipNotice)
 	})
 
@@ -301,8 +270,8 @@ func TestMetadataObjectColumns_DefaultsMatchLiveInspectionSchema(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			gotSchema, gotName := metadataObjectColumns(tc.dialect, tc.obj)
-			assert.Equal(t, tc.wantSchema, gotSchema, "object_schema")
-			assert.Equal(t, tc.wantName, gotName, "object_name")
+			assert.Equal(t, tc.wantSchema, gotSchema, "ObjectSchema")
+			assert.Equal(t, tc.wantName, gotName, "ObjectName")
 		})
 	}
 }
@@ -326,11 +295,11 @@ func TestRecordCodeObjectMetadata_UnqualifiedRowKeyedByEmptySchema_SQLite(t *tes
 
 	var storedSchema, storedName string
 	err = db.QueryRowContext(ctx,
-		`SELECT object_schema, object_name FROM `+DefaultObjectMetadataTableName+
-			` WHERE owner = ? AND object_name = ?`, cfg.Owner, "v_keying").
+		`SELECT "ObjectSchema", "ObjectName" FROM "`+DefaultObjectMetadataTableName+
+			`" WHERE "Owner" = ? AND "ObjectName" = ?`, cfg.Owner, "v_keying").
 		Scan(&storedSchema, &storedName)
 	require.NoError(t, err)
-	assert.Equal(t, "", storedSchema, "SQLite must continue recording empty object_schema")
+	assert.Equal(t, "", storedSchema, "SQLite must continue recording empty ObjectSchema")
 	assert.Equal(t, "v_keying", storedName)
 }
 
@@ -343,28 +312,28 @@ func TestMetadataCreateStatements_AllDialectsRender(t *testing.T) {
 	}
 	for _, d := range dialects {
 		stmts := metadataCreateStatements(d, cfg)
-		require.Lenf(t, stmts, 2, "%s: expected 2 create statements", d.Engine())
-		for _, s := range stmts {
-			assert.Containsf(t, s, "first_applied_at_utc", "%s: stmt missing first_applied_at_utc: %s", d.Engine(), s)
-			assert.Containsf(t, s, "last_applied_at_utc", "%s: stmt missing last_applied_at_utc: %s", d.Engine(), s)
-		}
-		assert.Containsf(t, stmts[0], DefaultDatabaseMetadataTableName, "%s: db table name", d.Engine())
-		assert.Containsf(t, stmts[1], DefaultObjectMetadataTableName, "%s: object table name", d.Engine())
-		assert.Containsf(t, stmts[1], "definition_hash", "%s: definition_hash column", d.Engine())
-		assert.Containsf(t, stmts[1], "last_changed_at_utc", "%s: last_changed_at_utc column", d.Engine())
+		require.Lenf(t, stmts, 1, "%s: expected exactly 1 create statement (object-only ledger)", d.Engine())
+		s := stmts[0]
+		assert.Containsf(t, s, DefaultObjectMetadataTableName, "%s: object table name", d.Engine())
+		assert.Containsf(t, s, "FirstAppliedAtUtc", "%s: stmt missing FirstAppliedAtUtc: %s", d.Engine(), s)
+		assert.Containsf(t, s, "LastAppliedAtUtc", "%s: stmt missing LastAppliedAtUtc: %s", d.Engine(), s)
+		assert.Containsf(t, s, "LastChangedAtUtc", "%s: stmt missing LastChangedAtUtc: %s", d.Engine(), s)
+		assert.Containsf(t, s, "DefinitionHash", "%s: stmt missing DefinitionHash: %s", d.Engine(), s)
+		assert.NotContainsf(t, s, "source_repo", "%s: source_repo must not be rendered", d.Engine())
+		assert.NotContainsf(t, s, "source_rev", "%s: source_rev must not be rendered", d.Engine())
+		assert.NotContainsf(t, s, "tool_version", "%s: tool_version must not be rendered", d.Engine())
+		assert.NotContainsf(t, s, "chuck_database_metadata", "%s: legacy db-level table must not appear", d.Engine())
+		assert.NotContainsf(t, s, "chuck_object_metadata", "%s: legacy lowercase table must not appear", d.Engine())
 	}
 }
 
 func TestMetadataCreateStatements_SchemaQualifiedOnNonSQLite(t *testing.T) {
 	cfg := MetadataConfig{Owner: "test", Schema: "metaschema"}
 	stmts := metadataCreateStatements(chuck.PostgresDialect{}, cfg)
-	require.Len(t, stmts, 2)
-	for _, s := range stmts {
-		assert.True(t,
-			strings.Contains(s, `"metaschema"."chuck_database_metadata"`) ||
-				strings.Contains(s, `"metaschema"."chuck_object_metadata"`),
-			"postgres schema-qualified table name expected: %s", s)
-	}
+	require.Len(t, stmts, 1)
+	assert.True(t,
+		strings.Contains(stmts[0], `"metaschema"."ChuckObjectMetadata"`),
+		"postgres schema-qualified table name expected: %s", stmts[0])
 }
 
 // --- helpers ----------------------------------------------------------------
@@ -390,9 +359,6 @@ type objectMetadataRow struct {
 	lastApplied    time.Time
 	lastChanged    time.Time
 	definitionHash string
-	sourceRepo     sql.NullString
-	sourceRev      sql.NullString
-	toolVersion    sql.NullString
 }
 
 func readObjectRow(
@@ -406,38 +372,13 @@ func readObjectRow(
 ) objectMetadataRow {
 	t.Helper()
 	schemaCol, nameCol := metadataObjectColumns(d, obj)
-	q := `SELECT first_applied_at_utc, last_applied_at_utc, last_changed_at_utc,
-	             definition_hash, source_repo, source_rev, tool_version
-	      FROM ` + DefaultObjectMetadataTableName + `
-	      WHERE owner = ? AND object_type = ? AND object_schema = ? AND object_name = ?`
+	q := `SELECT "FirstAppliedAtUtc", "LastAppliedAtUtc", "LastChangedAtUtc", "DefinitionHash"
+	      FROM "` + DefaultObjectMetadataTableName + `"
+	      WHERE "Owner" = ? AND "ObjectType" = ? AND "ObjectSchema" = ? AND "ObjectName" = ?`
 	var row objectMetadataRow
 	err := db.QueryRowContext(ctx, q, cfg.Owner, objectType, schemaCol, nameCol).Scan(
-		&row.firstApplied, &row.lastApplied, &row.lastChanged,
-		&row.definitionHash, &row.sourceRepo, &row.sourceRev, &row.toolVersion,
+		&row.firstApplied, &row.lastApplied, &row.lastChanged, &row.definitionHash,
 	)
-	require.NoError(t, err)
-	return row
-}
-
-type databaseMetadataRow struct {
-	firstApplied time.Time
-	lastApplied  time.Time
-}
-
-func readDatabaseRow(
-	t *testing.T,
-	ctx context.Context,
-	db *sql.DB,
-	d chuck.Dialect,
-	cfg MetadataConfig,
-) databaseMetadataRow {
-	t.Helper()
-	_ = d
-	q := `SELECT first_applied_at_utc, last_applied_at_utc
-	      FROM ` + DefaultDatabaseMetadataTableName + `
-	      WHERE owner = ?`
-	var row databaseMetadataRow
-	err := db.QueryRowContext(ctx, q, cfg.Owner).Scan(&row.firstApplied, &row.lastApplied)
 	require.NoError(t, err)
 	return row
 }

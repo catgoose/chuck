@@ -765,14 +765,13 @@ func (c *integrationFakeClock) advance(by time.Duration) { c.cur = c.cur.Add(by)
 // Contract covered:
 //
 //   - bare apply (no Metadata) does not touch the ledger
-//   - apply-with-Metadata creates the row on first apply; first_applied =
-//     last_applied = last_changed
-//   - re-applying the same body advances last_applied only; last_changed and
-//     first_applied stay frozen
-//   - applying a different body advances last_applied AND last_changed;
-//     first_applied stays frozen; definition_hash is replaced
-//   - chuck_database_metadata.first_applied stays frozen across repeat
-//     applies for the same owner
+//   - apply-with-Metadata creates the row on first apply; FirstAppliedAtUtc =
+//     LastAppliedAtUtc = LastChangedAtUtc
+//   - re-applying the same body advances LastAppliedAtUtc only;
+//     LastChangedAtUtc and FirstAppliedAtUtc stay frozen
+//   - applying a different body advances LastAppliedAtUtc AND
+//     LastChangedAtUtc; FirstAppliedAtUtc stays frozen; DefinitionHash is
+//     replaced
 //   - Validate*WithOptions remains clean regardless of ledger state — the
 //     ledger is independent of drift comparison
 func TestViewApplyWithOptions_SQLite_MetadataLedger(t *testing.T) {
@@ -789,11 +788,8 @@ func TestViewApplyWithOptions_SQLite_MetadataLedger(t *testing.T) {
 
 	clock := &integrationFakeClock{cur: time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)}
 	cfg := schema.MetadataConfig{
-		Owner:       "bootstrap",
-		SourceRepo:  "https://github.com/catgoose/chuck",
-		SourceRev:   "rev-1",
-		ToolVersion: "v0.0.1-test",
-		Now:         clock.Now,
+		Owner: "bootstrap",
+		Now:   clock.Now,
 	}
 	require.NoError(t, schema.EnsureMetadataTables(ctx, db, d, cfg))
 
@@ -814,30 +810,30 @@ func TestViewApplyWithOptions_SQLite_MetadataLedger(t *testing.T) {
 	assert.True(t, row.lastApplied.Equal(t0))
 	assert.True(t, row.lastChanged.Equal(t0))
 	firstHash := row.definitionHash
-	require.NotEmpty(t, firstHash, "definition_hash must be written")
+	require.NotEmpty(t, firstHash, "DefinitionHash must be written")
 
-	// Second apply, same body: last_applied advances, last_changed unchanged.
+	// Second apply, same body: LastAppliedAtUtc advances, LastChangedAtUtc unchanged.
 	clock.advance(time.Hour)
 	require.NoError(t, schema.ApplyViewWithOptions(ctx, db, d, opts, v))
 	row = readObjectMetadataRow(t, ctx, db, "bootstrap", "v_vva_md_open")
-	assert.True(t, row.firstApplied.Equal(t0), "first_applied must stay frozen on same-hash reapply")
+	assert.True(t, row.firstApplied.Equal(t0), "FirstAppliedAtUtc must stay frozen on same-hash reapply")
 	assert.True(t, row.lastApplied.Equal(t0.Add(time.Hour)))
-	assert.True(t, row.lastChanged.Equal(t0), "last_changed must not move when hash matches")
+	assert.True(t, row.lastChanged.Equal(t0), "LastChangedAtUtc must not move when hash matches")
 	assert.Equal(t, firstHash, row.definitionHash)
 
-	// Third apply, executable text changed: last_applied AND last_changed
-	// advance, first_applied still frozen, hash replaced.
+	// Third apply, executable text changed: LastAppliedAtUtc AND
+	// LastChangedAtUtc advance, FirstAppliedAtUtc still frozen, hash replaced.
 	clock.advance(time.Hour)
 	v2 := schema.NewView("v_vva_md_open", "SELECT id FROM vva_md_tasks WHERE done = 1")
 	defer func() { _, _ = db.ExecContext(ctx, v2.DropSQL(d)) }()
 	require.NoError(t, schema.ApplyViewWithOptions(ctx, db, d, opts, v2))
 	row = readObjectMetadataRow(t, ctx, db, "bootstrap", "v_vva_md_open")
-	assert.True(t, row.firstApplied.Equal(t0), "first_applied stays frozen on hash change")
+	assert.True(t, row.firstApplied.Equal(t0), "FirstAppliedAtUtc stays frozen on hash change")
 	assert.True(t, row.lastApplied.Equal(t0.Add(2*time.Hour)))
-	assert.True(t, row.lastChanged.Equal(t0.Add(2*time.Hour)), "last_changed must move on hash change")
-	assert.NotEqual(t, firstHash, row.definitionHash, "definition_hash must update on executable text change")
+	assert.True(t, row.lastChanged.Equal(t0.Add(2*time.Hour)), "LastChangedAtUtc must move on hash change")
+	assert.NotEqual(t, firstHash, row.definitionHash, "DefinitionHash must update on executable text change")
 
-	// Comment-only change (different DocPreamble) must not move last_changed.
+	// Comment-only change (different DocPreamble) must not move LastChangedAtUtc.
 	clock.advance(time.Hour)
 	optsWithDoc := schema.CodeObjectOptions{
 		DocPreamble: "different preamble text",
@@ -847,12 +843,7 @@ func TestViewApplyWithOptions_SQLite_MetadataLedger(t *testing.T) {
 	row = readObjectMetadataRow(t, ctx, db, "bootstrap", "v_vva_md_open")
 	assert.True(t, row.lastApplied.Equal(t0.Add(3*time.Hour)))
 	assert.True(t, row.lastChanged.Equal(t0.Add(2*time.Hour)),
-		"comment-only change must not advance last_changed because hash ignores leading comments")
-
-	// Per-owner database row tracks first/last apply.
-	dbFirst, dbLast := readDatabaseMetadataRow(t, ctx, db, "bootstrap")
-	assert.True(t, dbFirst.Equal(t0))
-	assert.True(t, dbLast.Equal(t0.Add(3*time.Hour)))
+		"comment-only change must not advance LastChangedAtUtc because hash ignores leading comments")
 
 	// Validate path must remain agnostic of the ledger.
 	require.NoError(t, schema.ValidateViewWithOptions(ctx, db, d, optsWithDoc, v2),
@@ -863,7 +854,7 @@ func countObjectMetadataRows(t *testing.T, ctx context.Context, db *sql.DB, owne
 	t.Helper()
 	var n int
 	require.NoError(t, db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM chuck_object_metadata WHERE owner = ? AND object_name = ?`,
+		`SELECT COUNT(*) FROM "ChuckObjectMetadata" WHERE "Owner" = ? AND "ObjectName" = ?`,
 		owner, name).Scan(&n))
 	return n
 }
@@ -879,20 +870,11 @@ func readObjectMetadataRow(t *testing.T, ctx context.Context, db *sql.DB, owner,
 	t.Helper()
 	var row liveObjectMetadataRow
 	require.NoError(t, db.QueryRowContext(ctx,
-		`SELECT first_applied_at_utc, last_applied_at_utc, last_changed_at_utc, definition_hash
-		   FROM chuck_object_metadata
-		  WHERE owner = ? AND object_name = ?`,
+		`SELECT "FirstAppliedAtUtc", "LastAppliedAtUtc", "LastChangedAtUtc", "DefinitionHash"
+		   FROM "ChuckObjectMetadata"
+		  WHERE "Owner" = ? AND "ObjectName" = ?`,
 		owner, name).Scan(&row.firstApplied, &row.lastApplied, &row.lastChanged, &row.definitionHash))
 	return row
-}
-
-func readDatabaseMetadataRow(t *testing.T, ctx context.Context, db *sql.DB, owner string) (firstApplied, lastApplied time.Time) {
-	t.Helper()
-	require.NoError(t, db.QueryRowContext(ctx,
-		`SELECT first_applied_at_utc, last_applied_at_utc
-		   FROM chuck_database_metadata
-		  WHERE owner = ?`, owner).Scan(&firstApplied, &lastApplied))
-	return firstApplied, lastApplied
 }
 
 // TestViewApplyWithOptions_SQLite_MetadataPointerInOwnershipNotice asserts the
@@ -902,7 +884,7 @@ func readDatabaseMetadataRow(t *testing.T, ctx context.Context, db *sql.DB, owne
 //
 //   - ApplyViewWithOptions with both OwnershipNotice and Metadata renders a
 //     provenance pointer line inside the ownership block comment, naming the
-//     dialect-quoted chuck_object_metadata table
+//     dialect-quoted ChuckObjectMetadata table
 //   - apply + validate with the same opts stay coherent — the strict
 //     configured-prefix strip recognises the augmented notice
 //   - bare validate (no opts) still passes because leading comment-only
@@ -946,7 +928,7 @@ func TestViewApplyWithOptions_SQLite_MetadataPointerInOwnershipNotice(t *testing
 	require.NoError(t, db.QueryRowContext(ctx,
 		`SELECT sql FROM sqlite_master WHERE type='view' AND name=?`, "v_vva_ptr_open").
 		Scan(&liveSQL))
-	assert.Contains(t, liveSQL, `Provenance recorded in "chuck_object_metadata".`,
+	assert.Contains(t, liveSQL, `Provenance recorded in "ChuckObjectMetadata".`,
 		"ownership notice must carry the metadata pointer when both notice and Metadata are set")
 	assert.Contains(t, liveSQL, "Owned by https://github.com/catgoose/chuck",
 		"base ownership text must still be present")

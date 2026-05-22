@@ -19,42 +19,60 @@ func SoftDeleteColumnDefs() []ColumnDef {
 	}
 }
 
-// AuditTrailSpec carries the explicit ColumnDefs the audit trail trait
-// appends to a TableDef. Each field is the caller's own ColumnDef, including
-// type, nullability, default, and mutability — chuck does not silently
-// override any of them. Callers that want the historical string-based shape
-// should use DefaultStringAuditTrail; integer/UUID/FK-style actor columns
-// just pass a ColumnDef built with the caller's chosen type and constraints.
+// AuditActorsSpec carries the create/update actor ColumnDefs the audit-actors
+// trait appends to a TableDef. Each field is the caller's own ColumnDef,
+// including type, nullability, default, and mutability — chuck does not
+// silently override any of them. Callers that want the historical
+// string-based shape should use DefaultStringAuditActors; integer / UUID /
+// FK-style actor columns just pass ColumnDefs built with the caller's chosen
+// type and constraints.
+//
+// Delete actor attribution is intentionally NOT part of this spec — it lives
+// behind WithDeleteActor so tables that do not soft-delete never carry a
+// DeletedBy column. This matches the WithTimestamps / WithSoftDelete split
+// on the timestamp side.
 //
 // The created-by column is intentionally not forced immutable here; the
 // caller's ColumnDef wins. Presets that want the historical "created-by is
 // frozen at insert time" behavior should call .Immutable() themselves
-// (DefaultStringAuditTrail does).
-type AuditTrailSpec struct {
+// (DefaultStringAuditActors does).
+type AuditActorsSpec struct {
 	CreatedBy ColumnDef
 	UpdatedBy ColumnDef
-	DeletedBy ColumnDef
 }
 
-// AuditColumnDefs returns the CreatedBy / UpdatedBy / DeletedBy ColumnDefs
-// from the spec, in the order the audit trait appends them to a TableDef.
-func AuditColumnDefs(spec AuditTrailSpec) []ColumnDef {
-	return []ColumnDef{spec.CreatedBy, spec.UpdatedBy, spec.DeletedBy}
+// AuditActorColumnDefs returns the CreatedBy / UpdatedBy ColumnDefs from the
+// spec, in the order the audit-actors trait appends them to a TableDef.
+func AuditActorColumnDefs(spec AuditActorsSpec) []ColumnDef {
+	return []ColumnDef{spec.CreatedBy, spec.UpdatedBy}
 }
 
-// DefaultStringAuditTrail returns the historical chuck audit shape: three
-// VARCHAR(255) actor columns named CreatedBy / UpdatedBy / DeletedBy, with
-// CreatedBy marked Immutable() so it is frozen at insert time and UpdatedBy /
-// DeletedBy left mutable. Use this when the caller stores actor identity as
-// a free-form string (username, email, opaque id) and wants the original
+// DeleteActorColumnDef returns the single DeletedBy ColumnDef appended by the
+// delete-actor trait. The caller's ColumnDef is returned unchanged.
+func DeleteActorColumnDef(col ColumnDef) ColumnDef {
+	return col
+}
+
+// DefaultStringAuditActors returns the historical chuck create/update actor
+// shape: two VARCHAR(255) columns named CreatedBy / UpdatedBy, with
+// CreatedBy marked Immutable() so it is frozen at insert time and UpdatedBy
+// left mutable. Use this when the caller stores actor identity as a
+// free-form string (username, email, opaque id) and wants the original
 // chuck defaults. Callers wanting typed actor identity (e.g. UserID INT
-// referencing Users) should build their own AuditTrailSpec.
-func DefaultStringAuditTrail() AuditTrailSpec {
-	return AuditTrailSpec{
+// referencing Users) should build their own AuditActorsSpec.
+func DefaultStringAuditActors() AuditActorsSpec {
+	return AuditActorsSpec{
 		CreatedBy: Col("CreatedBy", TypeString(255)).Immutable(),
 		UpdatedBy: Col("UpdatedBy", TypeString(255)),
-		DeletedBy: Col("DeletedBy", TypeString(255)),
 	}
+}
+
+// DefaultStringDeleteActor returns the historical chuck delete-actor shape:
+// a single nullable VARCHAR(255) column named DeletedBy. Use this when the
+// caller stores actor identity as a free-form string and wants the original
+// chuck default for soft-delete attribution.
+func DefaultStringDeleteActor() ColumnDef {
+	return Col("DeletedBy", TypeString(255))
 }
 
 // VersionColumnDefs returns a Version column for optimistic concurrency control.

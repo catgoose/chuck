@@ -42,7 +42,8 @@ func ExampleNewTable_traits() {
 		WithVersion().
 		WithSoftDelete().
 		WithTimestamps().
-		WithAuditTrail(schema.DefaultStringAuditTrail())
+		WithAuditActors(schema.DefaultStringAuditActors()).
+		WithDeleteActor(schema.DefaultStringDeleteActor())
 
 	// The table knows which columns are mutable vs immutable
 	fmt.Println("Select:", strings.Join(projects.SelectColumns(), ", "))
@@ -115,7 +116,8 @@ func ExampleNewTable_allTraits() {
 		).
 		WithTimestamps().
 		WithSoftDelete().
-		WithAuditTrail(schema.DefaultStringAuditTrail()).
+		WithAuditActors(schema.DefaultStringAuditActors()).
+		WithDeleteActor(schema.DefaultStringDeleteActor()).
 		WithVersion().
 		WithStatus("draft").
 		WithSortOrder().
@@ -151,10 +153,30 @@ func ExampleNewTable_allTraits() {
 	//   ExpiresAt
 }
 
-func ExampleTableDef_WithAuditTrail_typedActor() {
-	// Audit actor identity stored as an integer FK to Users instead of the
+func ExampleTableDef_WithAuditTrail_bundled() {
+	// WithAuditTrail bundles WithTimestamps + WithAuditActors — the common
+	// create/update audit combo for tables that always track timestamps and
+	// actors together but do not soft-delete.
+	notes := schema.NewTable("Notes").
+		Columns(
+			schema.AutoIncrCol("ID"),
+			schema.Col("Body", schema.TypeText()).NotNull(),
+		).
+		WithAuditTrail(schema.DefaultStringAuditActors())
+
+	fmt.Println("Select:", strings.Join(notes.SelectColumns(), ", "))
+	fmt.Println("Update:", strings.Join(notes.UpdateColumns(), ", "))
+	// Output:
+	// Select: ID, Body, CreatedAt, UpdatedAt, CreatedBy, UpdatedBy
+	// Update: Body, UpdatedAt, UpdatedBy
+}
+
+func ExampleTableDef_WithAuditActors_typedActor() {
+	// Actor identity stored as an integer FK to Users instead of the
 	// historical free-form string. Caller-controlled ColumnDef wins: chuck
-	// does not impose type, nullability, or mutability.
+	// does not impose type, nullability, or mutability. Delete-actor
+	// attribution is composed independently via WithDeleteActor so tables
+	// that do not soft-delete never carry a DeletedBy column.
 	tasks := schema.NewTable("Tasks").
 		Columns(
 			schema.AutoIncrCol("ID"),
@@ -162,14 +184,14 @@ func ExampleTableDef_WithAuditTrail_typedActor() {
 		).
 		WithTimestamps().
 		WithSoftDelete().
-		WithAuditTrail(schema.AuditTrailSpec{
+		WithAuditActors(schema.AuditActorsSpec{
 			CreatedBy: schema.Col("CreatedByID", schema.TypeInt()).NotNull().
 				References("Users", "ID").Immutable(),
 			UpdatedBy: schema.Col("UpdatedByID", schema.TypeInt()).NotNull().
 				References("Users", "ID"),
-			DeletedBy: schema.Col("DeletedByID", schema.TypeInt()).
-				References("Users", "ID"),
-		})
+		}).
+		WithDeleteActor(schema.Col("DeletedByID", schema.TypeInt()).
+			References("Users", "ID"))
 
 	fmt.Println("Select:", strings.Join(tasks.SelectColumns(), ", "))
 	fmt.Println("Update:", strings.Join(tasks.UpdateColumns(), ", "))

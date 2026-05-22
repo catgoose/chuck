@@ -284,7 +284,9 @@ Traits add columns and behavior in one call. They're composable -- use as many o
 | --------------------- | ------------------------------------- | ---------------------------------- |
 | `WithTimestamps()`    | `CreatedAt` (immutable), `UpdatedAt`  | Creation and modification tracking |
 | `WithSoftDelete()`    | `DeletedAt`                           | Soft delete (nullable timestamp)   |
-| `WithAuditTrail(spec)`| Caller-supplied actor columns         | Actor attribution (spec-driven)    |
+| `WithAuditActors(spec)` | Caller-supplied `CreatedBy`, `UpdatedBy` | Create/update actor attribution |
+| `WithDeleteActor(col)` | Caller-supplied `DeletedBy`           | Soft-delete actor attribution      |
+| `WithAuditTrail(spec)`| Bundle: `WithTimestamps()` + `WithAuditActors(spec)` | Common create/update audit combo |
 | `WithVersion()`       | `Version` (default 1)                 | Optimistic concurrency control     |
 | `WithStatus(default)` | `Status`                              | Workflow state                     |
 | `WithSortOrder()`     | `SortOrder`                           | Manual ordering                    |
@@ -299,51 +301,70 @@ Traits use PascalCase column names internally. For Postgres, these are automatic
 
 Each trait has a corresponding `ColumnDefs()` function (e.g., `TimestampColumnDefs()`, `SoftDeleteColumnDefs()`) if you need the column definitions without attaching them to a table.
 
-#### Audit trail: spec-driven actor columns
+#### Audit trail: timestamps, actors, and delete actor are separate
 
-`WithAuditTrail` takes an explicit `AuditTrailSpec` so actor identity can be
-typed however the caller stores it — free-form string, integer FK to a
-`Users` table, UUID, etc. Chuck never imposes a type, nullability, or
-mutability on actor columns; each field on the spec is the caller's own
-`ColumnDef`.
+Audit traits split along three orthogonal axes so tables only pay for what
+they need:
+
+| Axis             | Schema trait               | dbrepo helper                                   |
+| ---------------- | -------------------------- | ----------------------------------------------- |
+| Create/update timestamps | `WithTimestamps()`         | `SetCreateTimestamps`, `SetUpdateTimestamp`     |
+| Create/update actors     | `WithAuditActors(spec)`    | `SetCreateActor`, `SetUpdateActor`              |
+| Soft-delete timestamp    | `WithSoftDelete()`         | `SetSoftDelete`                                 |
+| Soft-delete actor        | `WithDeleteActor(col)`     | `SetDeleteActor`                                |
+
+`WithAuditTrail(spec)` is a convenience bundle equivalent to
+`WithTimestamps().WithAuditActors(spec)` — the common create/update audit
+combo. It does not touch delete semantics, so a non-soft-deleting table
+never grows a `DeletedBy` column it does not need.
+
+Actor identity can be typed however the caller stores it — free-form string,
+integer FK to a `Users` table, UUID, etc. Chuck never imposes a type,
+nullability, or mutability on actor columns; each field on the spec is the
+caller's own `ColumnDef`.
 
 ```go
-// Historical string shape — convenience preset for callers that store
+// Historical string shape — convenience presets for callers that store
 // actor identity as a free-form string (username, email, opaque id).
-// CreatedBy is marked immutable in the preset; UpdatedBy and DeletedBy
-// remain mutable.
+// CreatedBy is marked immutable in DefaultStringAuditActors; UpdatedBy and
+// DeletedBy remain mutable.
+notes := schema.NewTable("Notes").
+    Columns(/* ... */).
+    WithAuditTrail(schema.DefaultStringAuditActors()) // timestamps + actors bundle
+
 tasks := schema.NewTable("Tasks").
     Columns(/* ... */).
     WithTimestamps().
     WithSoftDelete().
-    WithAuditTrail(schema.DefaultStringAuditTrail())
+    WithAuditActors(schema.DefaultStringAuditActors()).
+    WithDeleteActor(schema.DefaultStringDeleteActor())
 
 // Typed actor identity — store the foreign key to your Users table.
 // The caller decides type, nullability, mutability, and FK behavior.
-tasks := schema.NewTable("Tasks").
+tasks = schema.NewTable("Tasks").
     Columns(/* ... */).
     WithTimestamps().
     WithSoftDelete().
-    WithAuditTrail(schema.AuditTrailSpec{
+    WithAuditActors(schema.AuditActorsSpec{
         CreatedBy: schema.Col("CreatedByID", schema.TypeInt()).NotNull().
             References("Users", "ID").Immutable(),
         UpdatedBy: schema.Col("UpdatedByID", schema.TypeInt()).NotNull().
             References("Users", "ID"),
-        DeletedBy: schema.Col("DeletedByID", schema.TypeInt()).
-            References("Users", "ID"),
-    })
+    }).
+    WithDeleteActor(schema.Col("DeletedByID", schema.TypeInt()).
+        References("Users", "ID"))
 ```
 
-The dbrepo audit helpers (`SetCreateAudit`, `SetUpdateAudit`,
-`SetDeleteAudit`) are generic over the actor type, so the same helper works
+The dbrepo actor helpers (`SetCreateActor`, `SetUpdateActor`,
+`SetDeleteActor`) are generic over the actor type, so the same helper works
 for string actors and typed actors alike:
 
 ```go
 // String actor
-dbrepo.SetCreateAudit(&row.CreatedBy, &row.UpdatedBy, "admin@example.com")
+dbrepo.SetCreateActor(&row.CreatedBy, &row.UpdatedBy, "admin@example.com")
 
 // Typed actor (e.g. int64 user id)
-dbrepo.SetCreateAudit(&row.CreatedByID, &row.UpdatedByID, currentUserID)
+dbrepo.SetCreateActor(&row.CreatedByID, &row.UpdatedByID, currentUserID)
 ```
 
 ### Table Factories
@@ -1442,22 +1463,22 @@ Same pattern -- `.Where()`, `.WithDialect()`, `.Returning()`, `.Build()`.
 Domain patterns as plain functions -- no base class, no embedded struct. Each function corresponds to a schema trait: `WithTimestamps()` declares the columns, these helpers set the values.
 
 ```go
-// Creating a record (pairs with WithTimestamps, WithVersion, WithAuditTrail).
-// SetCreateAudit / SetUpdateAudit / SetDeleteAudit are generic over the actor
-// type — pass a string actor or a typed actor (int64 user id, uuid.UUID,
-// etc.) and Go infers T from the value.
+// Creating a record (pairs with WithTimestamps + WithAuditActors, or the
+// bundled WithAuditTrail). SetCreateActor / SetUpdateActor / SetDeleteActor
+// are generic over the actor type — pass a string actor or a typed actor
+// (int64 user id, uuid.UUID, etc.) and Go infers T from the value.
 dbrepo.SetCreateTimestamps(&t.CreatedAt, &t.UpdatedAt)
 dbrepo.InitVersion(&t.Version)
-dbrepo.SetCreateAudit(&t.CreatedBy, &t.UpdatedBy, currentUser)
+dbrepo.SetCreateActor(&t.CreatedBy, &t.UpdatedBy, currentUser)
 
-// Updating (pairs with WithTimestamps, WithVersion, WithAuditTrail)
+// Updating (pairs with WithTimestamps + WithAuditActors)
 dbrepo.SetUpdateTimestamp(&t.UpdatedAt)
 dbrepo.IncrementVersion(&t.Version)
-dbrepo.SetUpdateAudit(&t.UpdatedBy, currentUser)
+dbrepo.SetUpdateActor(&t.UpdatedBy, currentUser)
 
-// Soft delete (pairs with WithSoftDelete, WithAuditTrail)
+// Soft delete (pairs with WithSoftDelete + WithDeleteActor)
 dbrepo.SetSoftDelete(&t.DeletedAt)
-dbrepo.SetDeleteAudit(&t.DeletedAt, &t.DeletedBy, currentUser)
+dbrepo.SetDeleteActor(&t.DeletedAt, &t.DeletedBy, currentUser)
 
 // State management (pairs with WithStatus, WithArchive, WithExpiry, WithReplacement)
 dbrepo.SetStatus(&t.Status, "published")

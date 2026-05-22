@@ -112,15 +112,45 @@ func (t *TableDef) WithSoftDelete() *TableDef {
 	return t
 }
 
-// WithAuditTrail appends the audit-trail actor columns from spec to the
-// table. The spec carries the caller's own ColumnDefs for CreatedBy,
-// UpdatedBy, and DeletedBy — chuck does not impose type, nullability, or
-// mutability defaults. Use DefaultStringAuditTrail() for the historical
-// VARCHAR(255) shape, or build an AuditTrailSpec with typed/FK-style
-// ColumnDefs for typed actor identity.
-func (t *TableDef) WithAuditTrail(spec AuditTrailSpec) *TableDef {
-	t.cols = append(t.cols, AuditColumnDefs(spec)...)
+// WithAuditActors appends the create/update actor columns from spec
+// (CreatedBy, UpdatedBy) to the table. The spec carries the caller's own
+// ColumnDefs — chuck does not impose type, nullability, or mutability
+// defaults. Use DefaultStringAuditActors() for the historical VARCHAR(255)
+// shape, or build an AuditActorsSpec with typed / FK-style ColumnDefs for
+// typed actor identity.
+//
+// Delete-actor attribution is intentionally not bundled here. Tables that
+// soft-delete and want to record who deleted should pair WithSoftDelete()
+// with WithDeleteActor(...); tables without soft-delete pay no DeletedBy
+// column.
+func (t *TableDef) WithAuditActors(spec AuditActorsSpec) *TableDef {
+	t.cols = append(t.cols, AuditActorColumnDefs(spec)...)
 	return t
+}
+
+// WithDeleteActor appends a single DeletedBy actor column to the table.
+// Intended to be paired with WithSoftDelete (which appends DeletedAt); the
+// two are independent so callers can compose actor attribution into any
+// soft-delete table without forcing every audited table to carry a
+// DeletedBy column. The caller's ColumnDef wins on type, nullability, and
+// mutability — chuck does not impose defaults. Use
+// DefaultStringDeleteActor() for the historical VARCHAR(255) shape.
+func (t *TableDef) WithDeleteActor(col ColumnDef) *TableDef {
+	t.cols = append(t.cols, DeleteActorColumnDef(col))
+	return t
+}
+
+// WithAuditTrail is a convenience bundle equivalent to
+// WithTimestamps().WithAuditActors(spec). It appends CreatedAt, UpdatedAt,
+// CreatedBy, and UpdatedBy in that order — the common create/update audit
+// combo for tables that always track both timestamps and actors together.
+//
+// WithAuditTrail intentionally does NOT touch delete semantics; callers that
+// soft-delete should compose WithSoftDelete and WithDeleteActor explicitly.
+// This keeps the convenience helper from smuggling delete columns into
+// tables that never soft-delete.
+func (t *TableDef) WithAuditTrail(spec AuditActorsSpec) *TableDef {
+	return t.WithTimestamps().WithAuditActors(spec)
 }
 
 // WithVersion appends a Version column for optimistic concurrency control.

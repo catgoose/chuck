@@ -41,21 +41,23 @@ func SetSoftDelete(deletedAt *time.Time) {
 	}
 }
 
-// SetDeleteAudit sets DeletedAt to the current time and writes the actor
-// into deletedBy for a soft-delete with audit trail. T is the caller's
-// actor-identity type (string, int64, uuid.UUID, etc). Both pointers are
-// nil-safe and skipped when nil.
-func SetDeleteAudit[T any](deletedAt *time.Time, deletedBy *T, actor T) {
+// SetDeleteActor sets DeletedAt to the current time and writes the actor
+// into deletedBy for a soft-delete with delete-actor attribution. T is the
+// caller's actor-identity type (string, int64, uuid.UUID, etc). Both
+// pointers are nil-safe and skipped when nil. Pairs with the schema-side
+// WithSoftDelete() + WithDeleteActor(...) trait composition.
+func SetDeleteActor[T any](deletedAt *time.Time, deletedBy *T, actor T) {
 	SetSoftDelete(deletedAt)
 	if deletedBy != nil {
 		*deletedBy = actor
 	}
 }
 
-// SetCreateAudit writes the actor into createdBy and updatedBy for a new
+// SetCreateActor writes the actor into createdBy and updatedBy for a new
 // record. T is the caller's actor-identity type (string, int64, uuid.UUID,
-// etc). Each pointer is nil-safe and skipped when nil.
-func SetCreateAudit[T any](createdBy, updatedBy *T, actor T) {
+// etc). Each pointer is nil-safe and skipped when nil. Pairs with the
+// schema-side WithAuditActors(...) trait.
+func SetCreateActor[T any](createdBy, updatedBy *T, actor T) {
 	if createdBy != nil {
 		*createdBy = actor
 	}
@@ -64,10 +66,10 @@ func SetCreateAudit[T any](createdBy, updatedBy *T, actor T) {
 	}
 }
 
-// SetUpdateAudit writes the actor into updatedBy for an updated record.
+// SetUpdateActor writes the actor into updatedBy for an updated record.
 // T is the caller's actor-identity type. The pointer is nil-safe and
-// skipped when nil.
-func SetUpdateAudit[T any](updatedBy *T, actor T) {
+// skipped when nil. Pairs with the schema-side WithAuditActors(...) trait.
+func SetUpdateActor[T any](updatedBy *T, actor T) {
 	if updatedBy != nil {
 		*updatedBy = actor
 	}

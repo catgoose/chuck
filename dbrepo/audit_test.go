@@ -52,38 +52,38 @@ func TestSetSortOrder(t *testing.T) {
 	assert.Equal(t, 5, o)
 }
 
-func TestAuditHelpers_StringActor(t *testing.T) {
+func TestActorHelpers_StringActor(t *testing.T) {
 	var createdBy, updatedBy string
-	SetCreateAudit(&createdBy, &updatedBy, "admin")
+	SetCreateActor(&createdBy, &updatedBy, "admin")
 	assert.Equal(t, "admin", createdBy)
 	assert.Equal(t, "admin", updatedBy)
 
-	SetUpdateAudit(&updatedBy, "user1")
+	SetUpdateActor(&updatedBy, "user1")
 	assert.Equal(t, "user1", updatedBy)
 }
 
-func TestAuditHelpers_TypedActor_Int64(t *testing.T) {
+func TestActorHelpers_TypedActor_Int64(t *testing.T) {
 	var createdBy, updatedBy int64
-	SetCreateAudit(&createdBy, &updatedBy, int64(42))
+	SetCreateActor(&createdBy, &updatedBy, int64(42))
 	assert.Equal(t, int64(42), createdBy)
 	assert.Equal(t, int64(42), updatedBy)
 
-	SetUpdateAudit(&updatedBy, int64(7))
+	SetUpdateActor(&updatedBy, int64(7))
 	assert.Equal(t, int64(7), updatedBy)
 }
 
-func TestDeleteAudit_StringActor(t *testing.T) {
+func TestDeleteActor_StringActor(t *testing.T) {
 	var deletedAt time.Time
 	var deletedBy string
-	SetDeleteAudit(&deletedAt, &deletedBy, "admin")
+	SetDeleteActor(&deletedAt, &deletedBy, "admin")
 	assert.False(t, deletedAt.IsZero())
 	assert.Equal(t, "admin", deletedBy)
 }
 
-func TestDeleteAudit_TypedActor_Int64(t *testing.T) {
+func TestDeleteActor_TypedActor_Int64(t *testing.T) {
 	var deletedAt time.Time
 	var deletedBy int64
-	SetDeleteAudit(&deletedAt, &deletedBy, int64(99))
+	SetDeleteActor(&deletedAt, &deletedBy, int64(99))
 	assert.False(t, deletedAt.IsZero())
 	assert.Equal(t, int64(99), deletedBy)
 }
@@ -144,14 +144,14 @@ func TestNilSafety(t *testing.T) {
 	ClearArchive(nilNullTime)
 	ClearExpiry(nilNullTime)
 	var nilString *string
-	SetCreateAudit(nilString, nilString, "")
-	SetUpdateAudit(nilString, "")
-	SetDeleteAudit(nil, nilString, "")
+	SetCreateActor(nilString, nilString, "")
+	SetUpdateActor(nilString, "")
+	SetDeleteActor(nil, nilString, "")
 	// Typed variants must be equally nil-safe.
 	var nilInt64 *int64
-	SetCreateAudit(nilInt64, nilInt64, int64(0))
-	SetUpdateAudit(nilInt64, int64(0))
-	SetDeleteAudit(nil, nilInt64, int64(0))
+	SetCreateActor(nilInt64, nilInt64, int64(0))
+	SetUpdateActor(nilInt64, int64(0))
+	SetDeleteActor(nil, nilInt64, int64(0))
 }
 
 func TestNowFuncOverride(t *testing.T) {

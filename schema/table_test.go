@@ -103,7 +103,8 @@ func TestTableTraits(t *testing.T) {
 		WithReplacement().
 		WithTimestamps().
 		WithSoftDelete().
-		WithAuditTrail(DefaultStringAuditTrail())
+		WithAuditActors(DefaultStringAuditActors()).
+		WithDeleteActor(DefaultStringDeleteActor())
 
 	cols := table.SelectColumns()
 	assert.Contains(t, cols, "UUID")

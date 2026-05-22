@@ -42,7 +42,7 @@ func ExampleNewTable_traits() {
 		WithVersion().
 		WithSoftDelete().
 		WithTimestamps().
-		WithAuditTrail()
+		WithAuditTrail(schema.DefaultStringAuditTrail())
 
 	// The table knows which columns are mutable vs immutable
 	fmt.Println("Select:", strings.Join(projects.SelectColumns(), ", "))
@@ -115,7 +115,7 @@ func ExampleNewTable_allTraits() {
 		).
 		WithTimestamps().
 		WithSoftDelete().
-		WithAuditTrail().
+		WithAuditTrail(schema.DefaultStringAuditTrail()).
 		WithVersion().
 		WithStatus("draft").
 		WithSortOrder().
@@ -149,6 +149,33 @@ func ExampleNewTable_allTraits() {
 	//   ReplacedByID
 	//   ArchivedAt
 	//   ExpiresAt
+}
+
+func ExampleTableDef_WithAuditTrail_typedActor() {
+	// Audit actor identity stored as an integer FK to Users instead of the
+	// historical free-form string. Caller-controlled ColumnDef wins: chuck
+	// does not impose type, nullability, or mutability.
+	tasks := schema.NewTable("Tasks").
+		Columns(
+			schema.AutoIncrCol("ID"),
+			schema.Col("Title", schema.TypeString(255)).NotNull(),
+		).
+		WithTimestamps().
+		WithSoftDelete().
+		WithAuditTrail(schema.AuditTrailSpec{
+			CreatedBy: schema.Col("CreatedByID", schema.TypeInt()).NotNull().
+				References("Users", "ID").Immutable(),
+			UpdatedBy: schema.Col("UpdatedByID", schema.TypeInt()).NotNull().
+				References("Users", "ID"),
+			DeletedBy: schema.Col("DeletedByID", schema.TypeInt()).
+				References("Users", "ID"),
+		})
+
+	fmt.Println("Select:", strings.Join(tasks.SelectColumns(), ", "))
+	fmt.Println("Update:", strings.Join(tasks.UpdateColumns(), ", "))
+	// Output:
+	// Select: ID, Title, CreatedAt, UpdatedAt, DeletedAt, CreatedByID, UpdatedByID, DeletedByID
+	// Update: Title, UpdatedAt, DeletedAt, UpdatedByID, DeletedByID
 }
 
 func ExampleNewLookupTable() {

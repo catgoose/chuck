@@ -52,7 +52,7 @@ func TestSetSortOrder(t *testing.T) {
 	assert.Equal(t, 5, o)
 }
 
-func TestAuditHelpers(t *testing.T) {
+func TestAuditHelpers_StringActor(t *testing.T) {
 	var createdBy, updatedBy string
 	SetCreateAudit(&createdBy, &updatedBy, "admin")
 	assert.Equal(t, "admin", createdBy)
@@ -62,12 +62,30 @@ func TestAuditHelpers(t *testing.T) {
 	assert.Equal(t, "user1", updatedBy)
 }
 
-func TestDeleteAudit(t *testing.T) {
+func TestAuditHelpers_TypedActor_Int64(t *testing.T) {
+	var createdBy, updatedBy int64
+	SetCreateAudit(&createdBy, &updatedBy, int64(42))
+	assert.Equal(t, int64(42), createdBy)
+	assert.Equal(t, int64(42), updatedBy)
+
+	SetUpdateAudit(&updatedBy, int64(7))
+	assert.Equal(t, int64(7), updatedBy)
+}
+
+func TestDeleteAudit_StringActor(t *testing.T) {
 	var deletedAt time.Time
 	var deletedBy string
 	SetDeleteAudit(&deletedAt, &deletedBy, "admin")
 	assert.False(t, deletedAt.IsZero())
 	assert.Equal(t, "admin", deletedBy)
+}
+
+func TestDeleteAudit_TypedActor_Int64(t *testing.T) {
+	var deletedAt time.Time
+	var deletedBy int64
+	SetDeleteAudit(&deletedAt, &deletedBy, int64(99))
+	assert.False(t, deletedAt.IsZero())
+	assert.Equal(t, int64(99), deletedBy)
 }
 
 func TestArchive(t *testing.T) {
@@ -125,9 +143,15 @@ func TestNilSafety(t *testing.T) {
 	var nilNullTime *sql.NullTime
 	ClearArchive(nilNullTime)
 	ClearExpiry(nilNullTime)
-	SetCreateAudit(nil, nil, "")
-	SetUpdateAudit(nil, "")
-	SetDeleteAudit(nil, nil, "")
+	var nilString *string
+	SetCreateAudit(nilString, nilString, "")
+	SetUpdateAudit(nilString, "")
+	SetDeleteAudit(nil, nilString, "")
+	// Typed variants must be equally nil-safe.
+	var nilInt64 *int64
+	SetCreateAudit(nilInt64, nilInt64, int64(0))
+	SetUpdateAudit(nilInt64, int64(0))
+	SetDeleteAudit(nil, nilInt64, int64(0))
 }
 
 func TestNowFuncOverride(t *testing.T) {

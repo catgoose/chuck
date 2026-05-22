@@ -112,9 +112,14 @@ func (t *TableDef) WithSoftDelete() *TableDef {
 	return t
 }
 
-// WithAuditTrail appends CreatedBy, UpdatedBy, and DeletedBy columns.
-func (t *TableDef) WithAuditTrail() *TableDef {
-	t.cols = append(t.cols, AuditColumnDefs()...)
+// WithAuditTrail appends the audit-trail actor columns from spec to the
+// table. The spec carries the caller's own ColumnDefs for CreatedBy,
+// UpdatedBy, and DeletedBy — chuck does not impose type, nullability, or
+// mutability defaults. Use DefaultStringAuditTrail() for the historical
+// VARCHAR(255) shape, or build an AuditTrailSpec with typed/FK-style
+// ColumnDefs for typed actor identity.
+func (t *TableDef) WithAuditTrail(spec AuditTrailSpec) *TableDef {
+	t.cols = append(t.cols, AuditColumnDefs(spec)...)
 	return t
 }
 

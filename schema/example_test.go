@@ -3,6 +3,7 @@ package schema_test
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/catgoose/chuck"
 	"github.com/catgoose/chuck/schema"
@@ -198,6 +199,38 @@ func ExampleTableDef_WithAuditActors_typedActor() {
 	// Output:
 	// Select: ID, Title, CreatedAt, UpdatedAt, DeletedAt, CreatedByID, UpdatedByID, DeletedByID
 	// Update: Title, UpdatedAt, DeletedAt, UpdatedByID, DeletedByID
+}
+
+type sessionSettingsExampleRow struct {
+	ID          int       `chuck:"pk,auto"`
+	SessionUUID string    `chuck:"size=36,unique,notnull"`
+	Theme       string    `chuck:"size=50,notnull,default='light'"`
+	Layout      string    `chuck:"size=50,notnull,default='classic'"`
+	CreatedAt   time.Time `chuck:"created_at"`
+	UpdatedAt   time.Time `chuck:"updated_at"`
+}
+
+func ExampleFromStruct() {
+	// FromStruct is an optional convenience helper for small,
+	// feature-owned tables. The returned *TableDef composes with the rest
+	// of the DSL — Indexes, WithSchema, traits — exactly like NewTable.
+	d, _ := chuck.New(chuck.SQLite)
+
+	sessions := schema.FromStruct[sessionSettingsExampleRow]("SessionSettings").
+		Indexes(schema.Index("idx_session_settings_uuid", "SessionUUID"))
+
+	fmt.Println("Columns:", strings.Join(sessions.SelectColumns(), ", "))
+	fmt.Print(sessions.SnapshotString(d))
+	// Output:
+	// Columns: ID, SessionUUID, Theme, Layout, created_at, updated_at
+	// TABLE SessionSettings
+	//   ID                   INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL [immutable]
+	//   SessionUUID          TEXT NOT NULL UNIQUE
+	//   Theme                TEXT NOT NULL DEFAULT 'light'
+	//   Layout               TEXT NOT NULL DEFAULT 'classic'
+	//   created_at           TIMESTAMP NOT NULL
+	//   updated_at           TIMESTAMP NOT NULL
+	//   INDEX idx_session_settings_uuid ON (SessionUUID)
 }
 
 func ExampleNewLookupTable() {

@@ -14,6 +14,7 @@
     - [CHECK Constraints](#check-constraints)
     - [Traits](#traits)
     - [Table Factories](#table-factories)
+    - [FromStruct (Optional Tag Helper)](#fromstruct-optional-tag-helper)
     - [Indexes](#indexes)
     - [Column Lists](#column-lists)
     - [Seed Data](#seed-data)
@@ -379,6 +380,65 @@ schema.NewLookupJoinTable("TaskOptions")                // Owner-to-lookup join 
 schema.NewEventTable("AuditLog", cols...)               // Append-only (all immutable)
 schema.NewQueueTable("Jobs", "Payload")                 // Job queue with scheduling
 ```
+
+### FromStruct (Optional Tag Helper)
+
+`FromStruct[T](name)` is an **optional convenience helper** for deriving a simple `*TableDef` from a Go struct with `chuck` tags. It is intended for small, feature-owned tables (caches, lookup/config tables, session/settings rows, framework-internal support tables) where boilerplate dominates the declaration. The explicit `NewTable(...).Columns(...)` DSL above is still the primary, recommended schema path for real application schema — indexes, composite uniques, traits, seeds, schema qualification, and lifecycle concerns belong there, not in tags.
+
+```go
+type SessionSettingsRow struct {
+    ID          int       `chuck:"pk,auto"`
+    SessionUUID string    `chuck:"size=36,unique,notnull"`
+    Theme       string    `chuck:"size=50,notnull,default='light'"`
+    Layout      string    `chuck:"size=50,notnull,default='classic'"`
+    CreatedAt   time.Time `chuck:"created_at"`
+    UpdatedAt   time.Time `chuck:"updated_at"`
+}
+
+var SessionSettingsTable = schema.FromStruct[SessionSettingsRow]("SessionSettings").
+    Indexes(schema.Index("idx_session_settings_uuid", "SessionUUID"))
+```
+
+The returned value is a normal `*TableDef`, so you can chain `Indexes`, `WithSchema`, `WithTimestamps`, `WithSoftDelete`, or any other builder afterwards.
+
+Supported `chuck` tag tokens (comma-separated):
+
+| Token            | Effect                                                          |
+| ---------------- | --------------------------------------------------------------- |
+| `-`              | Skip the field entirely.                                         |
+| `name=<col>`     | Override the column name. A single bare unknown token is also accepted as the column name (e.g. `chuck:"created_at"`). |
+| `pk`             | Mark column as `PRIMARY KEY`.                                    |
+| `auto`           | Auto-increment column. Requires `pk` and an integer-kind field. |
+| `unique`         | Add `UNIQUE` constraint. Rejected together with `pk`.            |
+| `notnull`        | Force `NOT NULL`.                                                |
+| `null`           | Force nullable.                                                  |
+| `size=<n>`       | `VARCHAR(n)` on string fields.                                   |
+| `default=<expr>` | Literal `DEFAULT` expression (caller owns SQL quoting).          |
+
+Type inference is intentionally narrow:
+
+| Go field type                                          | Inferred column type   |
+| ------------------------------------------------------ | ---------------------- |
+| `bool`                                                 | `TypeBool`             |
+| `int`, `int8`, `int16`, `int32`, `uint8`, `uint16`     | `TypeInt`              |
+| `int64`, `uint`, `uint32`, `uint64`                    | `TypeBigInt`           |
+| `float32`, `float64`                                   | `TypeFloat`            |
+| `string` (no `size=`)                                  | `TypeString(255)`      |
+| `string` with `size=N`                                 | `TypeVarchar(N)`       |
+| `time.Time`                                            | `TypeTimestamp`        |
+
+Pointer fields wrap the same inferred type and default to nullable. Non-pointer fields default to `NOT NULL`. `notnull` and `null` override either default.
+
+`FromStruct` fails loud (panic) when:
+
+- the generic argument is not a struct,
+- the table name is empty,
+- a field type or tag combination is unsupported (e.g. `size=` on an integer, `auto` without `pk`, `notnull` plus `null`, `unique` plus `pk`, unknown tag key, slice/map fields),
+- or no exported fields produce columns.
+
+Errors surface at table-declaration time — typically at package `var` init or during the first test — so misuse never becomes silent runtime drift. Embedded / anonymous struct fields are rejected; unexported fields are skipped silently.
+
+What is **not** supported by design: indexes, composite uniques, foreign keys, `CHECK` constraints, seeds, schema qualification, trait composition (`WithTimestamps`, `WithSoftDelete`, audit actors, etc.). Compose those on the returned `*TableDef` using the normal builders rather than encoding them into tags.
 
 ### Indexes
 

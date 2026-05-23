@@ -206,7 +206,7 @@ func columnFromField(f reflect.StructField, tag string) (ColumnDef, error) {
 		elem = f.Type.Elem()
 	}
 
-	if ft.hasSize && !(elem.Kind() == reflect.String) {
+	if ft.hasSize && elem.Kind() != reflect.String {
 		return ColumnDef{}, fmt.Errorf("size= is only valid for string fields")
 	}
 

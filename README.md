@@ -391,8 +391,8 @@ type SessionSettingsRow struct {
     SessionUUID string    `chuck:"size=36,unique,notnull"`
     Theme       string    `chuck:"size=50,notnull,default='light'"`
     Layout      string    `chuck:"size=50,notnull,default='classic'"`
-    CreatedAt   time.Time `chuck:"created_at"`
-    UpdatedAt   time.Time `chuck:"updated_at"`
+    CreatedAt   time.Time `chuck:"name=created_at"`
+    UpdatedAt   time.Time `chuck:"name=updated_at"`
 }
 
 var SessionSettingsTable = schema.FromStruct[SessionSettingsRow]("SessionSettings").
@@ -405,8 +405,8 @@ Supported `chuck` tag tokens (comma-separated):
 
 | Token            | Effect                                                          |
 | ---------------- | --------------------------------------------------------------- |
-| `-`              | Skip the field entirely.                                         |
-| `name=<col>`     | Override the column name. A single bare unknown token is also accepted as the column name (e.g. `chuck:"created_at"`). |
+| `-`              | Skip the field. Only honored when the entire tag is exactly `-`; mixing `-` with other tokens fails loud. |
+| `name=<col>`     | Override the column name. This is the only way to rename a column. |
 | `pk`             | Mark column as `PRIMARY KEY`.                                    |
 | `auto`           | Auto-increment column. Requires `pk` and an integer-kind field. |
 | `unique`         | Add `UNIQUE` constraint. Rejected together with `pk`.            |
@@ -414,6 +414,8 @@ Supported `chuck` tag tokens (comma-separated):
 | `null`           | Force nullable.                                                  |
 | `size=<n>`       | `VARCHAR(n)` on string fields.                                   |
 | `default=<expr>` | Literal `DEFAULT` expression (caller owns SQL quoting).          |
+
+Any other bare token — typoed flags like `notnul`, `uniqe`, `pkk`, or arbitrary words — fails loud instead of being silently swallowed as a column name. Use `name=<col>` to rename.
 
 Type inference is intentionally narrow:
 

@@ -17,9 +17,9 @@ import (
 //
 // Supported tag tokens (comma-separated inside `chuck:"..."`):
 //
-//	-               skip the field
-//	name=<col>      override the column name; a single bare unknown token
-//	                is also accepted as the column name
+//	-               skip the field; only honored when the entire tag is
+//	                exactly "-". Mixing "-" with other tokens fails loud.
+//	name=<col>      override the column name (only way to rename)
 //	pk              mark column as PRIMARY KEY
 //	auto            mark column as auto-increment; requires pk and an
 //	                integer-kind field
@@ -28,6 +28,10 @@ import (
 //	null            force nullable
 //	size=<n>        VARCHAR(n) on string fields
 //	default=<expr>  literal DEFAULT expression (caller owns quoting)
+//
+// Any other bare token (typoed flags like "notnul", "uniqe", or anything
+// else not on the list above) fails loud rather than being silently
+// swallowed as a column-name override.
 //
 // Inferred column types:
 //
@@ -112,8 +116,6 @@ func parseFieldTag(raw string) (fieldTag, error) {
 	if strings.TrimSpace(raw) == "" {
 		return ft, nil
 	}
-	nameFromBare := ""
-	nameFromKV := ""
 	for tok := range strings.SplitSeq(raw, ",") {
 		t := strings.TrimSpace(tok)
 		if t == "" {
@@ -127,10 +129,10 @@ func parseFieldTag(raw string) (fieldTag, error) {
 				if val == "" {
 					return ft, fmt.Errorf("tag name= requires a value")
 				}
-				if nameFromKV != "" {
+				if ft.colName != "" {
 					return ft, fmt.Errorf("tag name= specified more than once")
 				}
-				nameFromKV = val
+				ft.colName = val
 			case "size":
 				n, err := strconv.Atoi(val)
 				if err != nil || n <= 0 {
@@ -167,19 +169,8 @@ func parseFieldTag(raw string) (fieldTag, error) {
 		case "null":
 			ft.nullable = true
 		default:
-			if nameFromBare != "" {
-				return ft, fmt.Errorf("multiple bare tokens %q and %q; use name= to override the column name", nameFromBare, t)
-			}
-			nameFromBare = t
+			return ft, fmt.Errorf("unknown tag token %q; use name=<col> to override the column name", t)
 		}
-	}
-	if nameFromKV != "" && nameFromBare != "" {
-		return ft, fmt.Errorf("both name= and bare column-name token %q specified", nameFromBare)
-	}
-	if nameFromKV != "" {
-		ft.colName = nameFromKV
-	} else {
-		ft.colName = nameFromBare
 	}
 	return ft, nil
 }

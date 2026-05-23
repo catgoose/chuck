@@ -14,7 +14,7 @@ type sessionSettingsRow struct {
 	SessionUUID string    `chuck:"size=36,unique,notnull"`
 	Theme       string    `chuck:"size=50,notnull,default='light'"`
 	Layout      string    `chuck:"size=50,notnull,default='classic'"`
-	CreatedAt   time.Time `chuck:"created_at"`
+	CreatedAt   time.Time `chuck:"name=created_at"`
 	UpdatedAt   time.Time `chuck:"name=updated_at"`
 	Notes       *string
 	private     string //nolint:unused // exercises unexported-field skip
@@ -322,24 +322,54 @@ func TestFromStruct_FailLoud(t *testing.T) {
 			want: "name= specified more than once",
 		},
 		{
-			name: "duplicate bare name token",
+			name: "typoed flag notnul",
 			fn: func() {
 				type bad struct {
-					X int `chuck:"foo,bar"`
+					X int `chuck:"notnul"`
 				}
 				schema.FromStruct[bad]("Bad")
 			},
-			want: "multiple bare tokens",
+			want: `unknown tag token "notnul"`,
 		},
 		{
-			name: "both name= and bare name",
+			name: "typoed flag uniqe",
 			fn: func() {
 				type bad struct {
-					X int `chuck:"foo,name=bar"`
+					X int `chuck:"uniqe"`
 				}
 				schema.FromStruct[bad]("Bad")
 			},
-			want: "both name= and bare column-name token",
+			want: `unknown tag token "uniqe"`,
+		},
+		{
+			name: "typoed flag pkk",
+			fn: func() {
+				type bad struct {
+					X int `chuck:"pkk"`
+				}
+				schema.FromStruct[bad]("Bad")
+			},
+			want: `unknown tag token "pkk"`,
+		},
+		{
+			name: "skip mixed with other tokens",
+			fn: func() {
+				type bad struct {
+					X int `chuck:"-,notnull"`
+				}
+				schema.FromStruct[bad]("Bad")
+			},
+			want: `unknown tag token "-"`,
+		},
+		{
+			name: "skip with whitespace mixed",
+			fn: func() {
+				type bad struct {
+					X int `chuck:" - , pk "`
+				}
+				schema.FromStruct[bad]("Bad")
+			},
+			want: `unknown tag token "-"`,
 		},
 		{
 			name: "unknown tag key",
@@ -385,6 +415,38 @@ func TestFromStruct_FailLoud(t *testing.T) {
 			}()
 			tc.fn()
 		})
+	}
+}
+
+func TestFromStruct_NameRename(t *testing.T) {
+	type row struct {
+		ID    int    `chuck:"pk,auto"`
+		Inner string `chuck:"name=external_name,notnull,size=50"`
+	}
+	td := schema.FromStruct[row]("Renames")
+	cols := td.SelectColumns()
+	want := []string{"ID", "external_name"}
+	if len(cols) != len(want) {
+		t.Fatalf("SelectColumns = %v, want %v", cols, want)
+	}
+	for i, c := range cols {
+		if c != want[i] {
+			t.Errorf("col[%d] = %q, want %q", i, c, want[i])
+		}
+	}
+}
+
+func TestFromStruct_SkipExactlyDash(t *testing.T) {
+	type row struct {
+		ID   int    `chuck:"pk,auto"`
+		Hide string `chuck:"-"`
+		Keep string `chuck:"notnull"`
+	}
+	td := schema.FromStruct[row]("Skip")
+	for _, c := range td.SelectColumns() {
+		if c == "Hide" || c == "-" {
+			t.Errorf("Hide must be skipped, got %v", td.SelectColumns())
+		}
 	}
 }
 

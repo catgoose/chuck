@@ -206,8 +206,8 @@ type sessionSettingsExampleRow struct {
 	SessionUUID string    `chuck:"size=36,unique,notnull"`
 	Theme       string    `chuck:"size=50,notnull,default='light'"`
 	Layout      string    `chuck:"size=50,notnull,default='classic'"`
-	CreatedAt   time.Time `chuck:"created_at"`
-	UpdatedAt   time.Time `chuck:"updated_at"`
+	CreatedAt   time.Time `chuck:"name=created_at"`
+	UpdatedAt   time.Time `chuck:"name=updated_at"`
 }
 
 func ExampleFromStruct() {

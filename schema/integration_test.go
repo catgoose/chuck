@@ -960,3 +960,99 @@ func TestViewApplyWithOptions_SQLite_MetadataPointerInOwnershipNotice(t *testing
 	assert.NotContains(t, liveSQL, "Provenance recorded in",
 		"notice-only must not carry a metadata pointer when no ledger is enabled")
 }
+
+// TestDropRetiredTablesMSSQL covers the destructive-rebuild blocker the issue
+// #111 documents: a retired managed table still carries an inbound FK to a
+// current managed table, blocking the rebuild even after the retired table
+// was removed from the manifest.
+//
+// The setup mirrors that scenario: a current managed parent table that the
+// rebuild wants to keep, plus a retired child table that references it via
+// an inline auto-named FK declared back when both were managed. The retired
+// child is no longer in the current `*TableDef` slice, so a naive
+// DropOrder-driven teardown leaves the FK in place and DROP TABLE on the
+// current parent fails with FK violation.
+//
+// DropRetiredTables must:
+//  1. Detach the auto-named FK from the (now unmanaged) retired child to the
+//     current parent before issuing the retired drop.
+//  2. Drop the retired child table.
+//  3. Leave the current parent in a state where InboundForeignKeys reports
+//     no remaining inbound FK and DROP TABLE on the parent succeeds.
+func TestDropRetiredTablesMSSQL(t *testing.T) {
+	dsn := os.Getenv("CHUCK_MSSQL_URL")
+	if dsn == "" {
+		t.Skip("CHUCK_MSSQL_URL not set")
+	}
+
+	ctx := context.Background()
+	db, d, err := chuck.OpenURL(ctx, dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// The current parent stays in the manifest; the retired child references
+	// it via an inline FK and is no longer declared. We still need the child's
+	// declared *TableDef during this test's bootstrap so the inline FK
+	// actually gets created — destructive rebuild in production removes that
+	// declaration; here it just produces the live FK we need.
+	parent := schema.NewTable("chuck_tomb_parent").Columns(
+		schema.AutoIncrCol("ID"),
+		schema.Col("Name", schema.TypeVarchar(50)).NotNull(),
+	)
+	childForSetup := schema.NewTable("chuck_tomb_retired_child").Columns(
+		schema.AutoIncrCol("ID"),
+		schema.Col("ParentID", schema.TypeInt()).NotNull().
+			References("chuck_tomb_parent", "ID"),
+	)
+	currentTables := []*schema.TableDef{parent}
+	bootstrapTables := []*schema.TableDef{parent, childForSetup}
+
+	cleanup := func() {
+		if fks, ferr := schema.InboundForeignKeys(ctx, db, d, bootstrapTables...); ferr == nil {
+			for _, fk := range fks {
+				_, _ = db.ExecContext(ctx, schema.DropForeignKeySQL(d, fk))
+			}
+		}
+		if dropOrder, oerr := schema.DropOrder(bootstrapTables...); oerr == nil {
+			for _, td := range dropOrder {
+				_, _ = db.ExecContext(ctx, td.DropSQL(d))
+			}
+		}
+	}
+	cleanup()
+
+	createOrder, err := schema.CreationOrder(bootstrapTables...)
+	require.NoError(t, err)
+	for _, td := range createOrder {
+		for _, stmt := range td.CreateIfNotExistsSQL(d) {
+			_, err := db.ExecContext(ctx, stmt)
+			require.NoError(t, err, "create table: %s", stmt)
+		}
+	}
+	defer cleanup()
+
+	// Sanity check: the retired-child→parent FK is in place and a naive parent
+	// drop fails — that is the regression the helper exists to unblock.
+	_, err = db.ExecContext(ctx, parent.DropSQL(d))
+	require.Error(t, err,
+		"DROP TABLE on the current parent must fail while the retired child's inbound FK still pins it")
+
+	// Tombstone teardown: declare the retired child by name only.
+	retired := []*schema.RetiredTableDef{
+		schema.RetiredTable("chuck_tomb_retired_child"),
+		schema.RetiredTable("chuck_tomb_retired_child"), // duplicate must dedupe
+	}
+	require.NoError(t, schema.DropRetiredTables(ctx, db, d, retired...))
+
+	// Retired table must be gone and no inbound FK should remain over the
+	// current managed set.
+	remaining, err := schema.InboundForeignKeys(ctx, db, d, currentTables...)
+	require.NoError(t, err)
+	assert.Empty(t, remaining,
+		"after retired tombstone drop, the current managed set must have no inbound FKs left")
+
+	// Final confirmation: the current parent can now be dropped cleanly.
+	_, err = db.ExecContext(ctx, parent.DropSQL(d))
+	require.NoError(t, err,
+		"current parent DROP TABLE must succeed once the retired tombstone has detached the FK and dropped the child")
+}

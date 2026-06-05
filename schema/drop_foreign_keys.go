@@ -84,6 +84,20 @@ func inboundForeignKeysMSSQL(ctx context.Context, db *sql.DB, d chuck.Dialect, t
 	if len(owned) == 0 {
 		return nil, nil
 	}
+	return foreignKeysMatchingKeySetMSSQL(ctx, db, owned)
+}
+
+// foreignKeysMatchingKeySetMSSQL returns sys.foreign_keys rows whose parent or
+// referenced table key is in the supplied set. The set must already be in
+// "schema.name" form with both components normalized via the active dialect so
+// it lines up with SCHEMA_NAME / sys.objects.name output. Shared between the
+// owned-set destructive teardown path (InboundForeignKeys) and the retired
+// tombstone teardown path (DropRetiredTables) so a single query pattern keeps
+// both flows in sync.
+func foreignKeysMatchingKeySetMSSQL(ctx context.Context, db *sql.DB, keys map[string]struct{}) ([]ForeignKeyRef, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
 
 	const q = `SELECT fk.name AS constraint_name, ` +
 		`SCHEMA_NAME(parent.schema_id) AS parent_schema, ` +
@@ -107,7 +121,7 @@ func inboundForeignKeysMSSQL(ctx context.Context, db *sql.DB, d chuck.Dialect, t
 		if err := rows.Scan(&fk.Name, &fk.ParentSchema, &fk.ParentTable, &fk.ReferencedSchema, &fk.ReferencedTable); err != nil {
 			return nil, fmt.Errorf("scan sys.foreign_keys row: %w", err)
 		}
-		if !ownedFK(owned, fk) {
+		if !ownedFK(keys, fk) {
 			continue
 		}
 		out = append(out, fk)

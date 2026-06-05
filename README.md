@@ -19,6 +19,7 @@
     - [Column Lists](#column-lists)
     - [Seed Data](#seed-data)
     - [Table Dependency Ordering](#table-dependency-ordering)
+    - [Retired Table Tombstones](#retired-table-tombstones)
     - [Owned Views](#owned-views)
     - [Owned Procedures (MSSQL)](#owned-procedures-mssql)
     - [Code-Object Validate and Apply](#code-object-validate-and-apply)
@@ -554,6 +555,41 @@ for _, t := range dropOrder {
 ```
 
 For dry-run logging, call `InboundForeignKeys` and feed each entry to `DropForeignKeySQL` to inspect the generated statements without executing them.
+
+### Retired Table Tombstones
+
+Schema manifests evolve, and a table that was once managed can be removed from the current `*TableDef` slice. The live database still has the old table, so a destructive rebuild that drops only currently-registered tables can leave an orphaned inbound foreign key behind — which then blocks the current managed parent from being dropped. The MSSQL teardown of `dbo.GroupMembershipSources` → `dbo.Groups` is the canonical case.
+
+`RetiredTable` / `RetiredQualifiedTable` declare lightweight tombstones for retired managed tables. They carry only a structured `chuck.ObjectName` identity and render the same dialect-aware `DROP TABLE IF EXISTS` statement as `TableDef.DropSQL`, so callers do not have to temporarily re-register old tables as current schema to drop them.
+
+```go
+retired := []*schema.RetiredTableDef{
+    schema.RetiredQualifiedTable("dbo", "GroupMembershipSources"),
+    schema.RetiredTable("LegacyAudit"),
+}
+
+// Drops each tombstone, on MSSQL detaching any inbound FK whose parent or
+// referenced endpoint is one of the retired tables before issuing the drop.
+// Duplicates are deduped by structured object identity; errors include the
+// failing tombstone's qualified name.
+if err := schema.DropRetiredTables(ctx, db, dialect, retired...); err != nil {
+    log.Fatal(err)
+}
+```
+
+Recommended destructive-rebuild ordering:
+
+1. Drop code-owned views and procedures (`DropSQL` on each `ViewDef` / `ProcedureDef`).
+2. Drop retired table tombstones with `DropRetiredTables` — on MSSQL this also detaches the FKs that pinned them to current managed tables.
+3. Drop inbound FKs on the current managed set with `DropInboundForeignKeys` (MSSQL only; a no-op elsewhere).
+4. Drop current managed tables with `DropOrder`.
+5. Recreate current managed tables, indexes, seeds, views, and procedures.
+
+The tombstone API is intentionally narrow:
+
+- It declares retirement by an explicit list. There is no automatic discovery of stale tables from the live database — that would mean dropping unmanaged tables an operator never agreed to lose.
+- On MSSQL it detaches only the FKs whose parent or referenced endpoint is in the retired set. Unmanaged FKs that touch no retired table are left in place.
+- Postgres callers who need `CASCADE` semantics should drop dependent objects themselves first; chuck does not synthesize `CASCADE` because the blast radius would exceed the explicit-list contract.
 
 ### Owned Views
 

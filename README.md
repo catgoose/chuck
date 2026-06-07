@@ -11,6 +11,7 @@
   - [Schema as Code](#schema-as-code)
     - [Primary Keys](#primary-keys)
     - [Foreign Key References](#foreign-key-references)
+    - [Schema-Qualified Tables](#schema-qualified-tables)
     - [CHECK Constraints](#check-constraints)
     - [Traits](#traits)
     - [Table Factories](#table-factories)

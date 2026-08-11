@@ -109,7 +109,7 @@ func TestMSSQLDialect(t *testing.T) {
 	})
 
 	t.Run("Now", func(t *testing.T) {
-		assert.Equal(t, "GETDATE()", d.Now())
+		assert.Equal(t, "SYSUTCDATETIME()", d.Now())
 	})
 
 	t.Run("ColumnTypes", func(t *testing.T) {

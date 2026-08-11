@@ -8,8 +8,8 @@ import (
 )
 
 // NewEventTable creates an append-only event/log table. All columns are immutable (no updates).
-// Includes an auto-increment ID, a timestamp defaulting to NOW(), and caller-defined columns
-// for the event data (e.g., event type, actor, payload).
+// Includes an auto-increment ID, a CreatedAt defaulting to the dialect's current-time
+// expression, and caller-defined columns for the event data (e.g., event type, actor, payload).
 func NewEventTable(name string, cols ...ColumnDef) *TableDef {
 	lower := strings.ToLower(name)
 	allCols := []ColumnDef{

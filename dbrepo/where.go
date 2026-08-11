@@ -140,11 +140,17 @@ func (w *WhereBuilder) NotDeleted(col ...string) *WhereBuilder {
 	return w.And(colName("DeletedAt", col) + " IS NULL")
 }
 
-// NotExpired adds a condition that filters out expired records.
+// NotExpired adds a condition that filters out expired records. With a dialect
+// set via WithDialect it compares against that dialect's UTC clock expression;
+// without one it falls back to CURRENT_TIMESTAMP.
 // Pass an optional column name to override the default "ExpiresAt".
 func (w *WhereBuilder) NotExpired(col ...string) *WhereBuilder {
 	c := colName("ExpiresAt", col)
-	return w.And(fmt.Sprintf("(%s IS NULL OR %s > CURRENT_TIMESTAMP)", c, c))
+	now := "CURRENT_TIMESTAMP"
+	if w.dialect != nil {
+		now = w.dialect.Now()
+	}
+	return w.And(fmt.Sprintf("(%s IS NULL OR %s > %s)", c, c, now))
 }
 
 // HasStatus adds a "Status = @Status" condition.

@@ -11,9 +11,11 @@ import (
 //	dbrepo.NowFunc = func() time.Time { return fixedTime }
 var NowFunc = time.Now
 
-// GetNow returns the current time via NowFunc.
+// GetNow returns NowFunc's time as UTC. Every Chuck-managed timestamp is a UTC
+// instant, so Go-written values share a scale with the dialect's generated
+// current-time defaults.
 func GetNow() time.Time {
-	return NowFunc()
+	return NowFunc().UTC()
 }
 
 // SetCreateTimestamps sets CreatedAt and UpdatedAt to current time.
@@ -103,10 +105,10 @@ func SetStatus(status *string, value string) {
 	}
 }
 
-// SetExpiry sets ExpiresAt to the given time.
+// SetExpiry sets ExpiresAt to the given time, normalized to UTC.
 func SetExpiry(expiresAt *time.Time, t time.Time) {
 	if expiresAt != nil {
-		*expiresAt = t
+		*expiresAt = t.UTC()
 	}
 }
 

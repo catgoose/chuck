@@ -396,3 +396,30 @@ func TestWhereNotArchivedBool(t *testing.T) {
 		assert.Equal(t, "WHERE is_archived = 0", w.String())
 	})
 }
+
+func TestWhereNotExpiredDialects(t *testing.T) {
+	t.Run("mssql_uses_utc_clock", func(t *testing.T) {
+		w := NewWhere().WithDialect(chuck.MSSQLDialect{}).NotExpired()
+		assert.Equal(t, "WHERE (ExpiresAt IS NULL OR ExpiresAt > SYSUTCDATETIME())", w.String())
+	})
+
+	t.Run("postgres_uses_now", func(t *testing.T) {
+		w := NewWhere().WithDialect(chuck.PostgresDialect{}).NotExpired()
+		assert.Equal(t, "WHERE (ExpiresAt IS NULL OR ExpiresAt > NOW())", w.String())
+	})
+
+	t.Run("sqlite_uses_current_timestamp", func(t *testing.T) {
+		w := NewWhere().WithDialect(chuck.SQLiteDialect{}).NotExpired()
+		assert.Equal(t, "WHERE (ExpiresAt IS NULL OR ExpiresAt > CURRENT_TIMESTAMP)", w.String())
+	})
+
+	t.Run("no_dialect_uses_current_timestamp", func(t *testing.T) {
+		w := NewWhere().NotExpired()
+		assert.Equal(t, "WHERE (ExpiresAt IS NULL OR ExpiresAt > CURRENT_TIMESTAMP)", w.String())
+	})
+
+	t.Run("custom_column_with_dialect", func(t *testing.T) {
+		w := NewWhere().WithDialect(chuck.MSSQLDialect{}).NotExpired("expires_at")
+		assert.Equal(t, "WHERE (expires_at IS NULL OR expires_at > SYSUTCDATETIME())", w.String())
+	})
+}

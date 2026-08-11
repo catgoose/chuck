@@ -28,7 +28,7 @@ func (MSSQLDialect) AutoIncrement() string {
 	return "INT PRIMARY KEY IDENTITY(1,1)"
 }
 
-func (MSSQLDialect) Now() string { return "GETDATE()" }
+func (MSSQLDialect) Now() string { return "SYSUTCDATETIME()" }
 
 func (MSSQLDialect) TimestampType() string { return "DATETIME" }
 

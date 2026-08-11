@@ -171,6 +171,28 @@ func TestCreateIfNotExistsSQL(t *testing.T) {
 	}
 }
 
+func TestTimestampTraitDefaults(t *testing.T) {
+	table := NewTable("Users").
+		Columns(AutoIncrCol("ID")).
+		WithTimestamps()
+
+	cases := []struct {
+		dialect chuck.Dialect
+		expect  string
+	}{
+		{chuck.PostgresDialect{}, "DEFAULT NOW()"},
+		{chuck.SQLiteDialect{}, "DEFAULT CURRENT_TIMESTAMP"},
+		{chuck.MSSQLDialect{}, "DEFAULT SYSUTCDATETIME()"},
+	}
+
+	for _, tc := range cases {
+		t.Run(string(tc.dialect.Engine()), func(t *testing.T) {
+			stmts := table.CreateIfNotExistsSQL(tc.dialect)
+			assert.Contains(t, stmts[0], tc.expect)
+		})
+	}
+}
+
 func TestDropSQL(t *testing.T) {
 	table := NewTable("Users")
 	d := chuck.SQLiteDialect{}

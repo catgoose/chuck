@@ -70,7 +70,7 @@ func TestSnapshot(t *testing.T) {
 
 		// Timestamp default differs
 		assert.Equal(t, "NOW()", pgSnap.Columns[3].Default)
-		assert.Equal(t, "GETDATE()", msSnap.Columns[3].Default)
+		assert.Equal(t, "SYSUTCDATETIME()", msSnap.Columns[3].Default)
 	})
 }
 

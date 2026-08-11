@@ -103,7 +103,7 @@ func TestExpiry(t *testing.T) {
 	var expiresAt time.Time
 	future := time.Now().Add(24 * time.Hour)
 	SetExpiry(&expiresAt, future)
-	assert.Equal(t, future, expiresAt)
+	assert.Equal(t, future.UTC(), expiresAt)
 
 	nullTime := sql.NullTime{Time: expiresAt, Valid: true}
 	ClearExpiry(&nullTime)
@@ -166,4 +166,52 @@ func TestNowFuncOverride(t *testing.T) {
 	SetCreateTimestamps(&created, &updated)
 	assert.Equal(t, fixed, created)
 	assert.Equal(t, fixed, updated)
+}
+
+func TestGetNowNormalizesToUTC(t *testing.T) {
+	zone := time.FixedZone("UTC-5", -5*60*60)
+	local := time.Date(2025, 6, 15, 7, 0, 0, 0, zone)
+	original := NowFunc
+	NowFunc = func() time.Time { return local }
+	defer func() { NowFunc = original }()
+
+	now := GetNow()
+	assert.Equal(t, time.UTC, now.Location())
+	assert.True(t, now.Equal(local))
+	assert.Equal(t, time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC), now)
+}
+
+func TestTimestampHelpersNormalizeToUTC(t *testing.T) {
+	zone := time.FixedZone("UTC-5", -5*60*60)
+	local := time.Date(2025, 6, 15, 7, 0, 0, 0, zone)
+	expected := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	original := NowFunc
+	NowFunc = func() time.Time { return local }
+	defer func() { NowFunc = original }()
+
+	var created, updated, deleted, archived time.Time
+	SetCreateTimestamps(&created, &updated)
+	SetSoftDelete(&deleted)
+	SetArchive(&archived)
+
+	assert.Equal(t, expected, created)
+	assert.Equal(t, expected, updated)
+	assert.Equal(t, expected, deleted)
+	assert.Equal(t, expected, archived)
+
+	var touched time.Time
+	SetUpdateTimestamp(&touched)
+	assert.Equal(t, expected, touched)
+}
+
+func TestSetExpiryNormalizesToUTC(t *testing.T) {
+	zone := time.FixedZone("UTC+2", 2*60*60)
+	local := time.Date(2025, 6, 15, 14, 0, 0, 0, zone)
+
+	var expiresAt time.Time
+	SetExpiry(&expiresAt, local)
+
+	assert.Equal(t, time.UTC, expiresAt.Location())
+	assert.True(t, expiresAt.Equal(local))
+	assert.Equal(t, time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC), expiresAt)
 }

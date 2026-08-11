@@ -1177,12 +1177,14 @@ Each engine speaks its own dialect:
 | ---------------------------------- | ----------------------------- | ----------------------------------- | ------------------------------------------------- |
 | `AutoIncrement()`                  | `SERIAL PRIMARY KEY`          | `INTEGER PRIMARY KEY AUTOINCREMENT` | `INT PRIMARY KEY IDENTITY(1,1)`                   |
 | `TimestampType()`                  | `TIMESTAMPTZ`                 | `TIMESTAMP`                         | `DATETIME`                                        |
-| `Now()`                            | `NOW()`                       | `CURRENT_TIMESTAMP`                 | `GETDATE()`                                       |
+| `Now()`                            | `NOW()`                       | `CURRENT_TIMESTAMP`                 | `SYSUTCDATETIME()`                                |
 | `Placeholder(1)`                   | `$1`                          | `?`                                 | `@p1`                                             |
 | `Pagination()`                     | `LIMIT @Limit OFFSET @Offset` | `LIMIT @Limit OFFSET @Offset`       | `OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY` |
 | `BoolType()`                       | `BOOLEAN`                     | `INTEGER`                           | `BIT`                                             |
 | `NormalizeIdentifier("CreatedAt")` | `created_at`                  | `CreatedAt`                         | `CreatedAt`                                       |
 | `QuoteIdentifier("t")`             | `"t"`                         | `"t"`                               | `[t]`                                             |
+
+`Now()` is UTC on every engine. Older MSSQL tables whose defaults were generated as `GETDATE()` keep writing server-local time: `ValidateSchema` reports the mismatch until the constraint is recreated, and existing rows are not converted.
 
 ### Column Type Methods
 
@@ -1252,7 +1254,7 @@ Some SQL functions have genuinely different syntax across engines. Chuck provide
 | -------------------------------- | ------------------------------------- | ------------------------------------ | ------------------------------------ |
 | `IsNull("Email", "'none'")`      | `COALESCE("email", 'none')`          | `IFNULL("Email", 'none')`           | `ISNULL([Email], 'none')`           |
 | `Concat("First", "' '", "Last")` | `"first_name" \|\| ' ' \|\| "last_name"` | `"First" \|\| ' ' \|\| "Last"` | `[First] + ' ' + [Last]`           |
-| `Now()`                          | `NOW()`                               | `CURRENT_TIMESTAMP`                  | `GETDATE()`                          |
+| `Now()`                          | `NOW()`                               | `CURRENT_TIMESTAMP`                  | `SYSUTCDATETIME()`                   |
 
 Column identifiers are normalized and quoted per dialect. String literals (single-quoted) pass through as-is.
 
@@ -1435,7 +1437,7 @@ w := dbrepo.NewWhere().WithDialect(dialect).
     NotDeleted().                  // DeletedAt IS NULL
     NotArchived().                 // ArchivedAt IS NULL (timestamp column)
     NotArchivedBool().             // NOT archived (boolean column)
-    NotExpired().                  // ExpiresAt IS NULL OR ExpiresAt > CURRENT_TIMESTAMP
+    NotExpired().                  // ExpiresAt IS NULL OR ExpiresAt > the dialect's Now()
     HasStatus("active").           // Status = @Status
     HasVersion(3).                 // Version = @Version
     IsRoot().                      // ParentID IS NULL
@@ -1560,6 +1562,8 @@ Same pattern -- `.Where()`, `.WithDialect()`, `.Returning()`, `.Build()`.
 > -- Layman Grug
 
 Domain patterns as plain functions -- no base class, no embedded struct. Each function corresponds to a schema trait: `WithTimestamps()` declares the columns, these helpers set the values.
+
+Every timestamp these helpers write is UTC, including the explicit time passed to `SetExpiry`. Generated `DEFAULT` expressions and `NotExpired()` use the same instant scale, so Go-written and database-written timestamps compare correctly.
 
 ```go
 // Creating a record (pairs with WithTimestamps + WithAuditActors, or the

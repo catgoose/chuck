@@ -214,13 +214,12 @@ jobs:
         run: |
           EXISTING=$(gh issue list \
             --repo "${{ github.repository }}" \
-            --label "ci" \
             --state open \
-            --limit 1 \
-            --json number \
-            --jq '.[0].number')
+            --limit 100 \
+            --json number,title | jq -r --arg title "$ISSUE_TITLE" \
+            '.[] | select(.title == $title) | .number' | head -n 1)
 
-          if [ -n "$EXISTING" ] && [ "$EXISTING" != "null" ]; then
+          if [ -n "$EXISTING" ]; then
             gh issue close "$EXISTING" \
               --repo "${{ github.repository }}" \
               --comment "Pipeline succeeded — closing resolved issue.
@@ -232,6 +231,7 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
+          ISSUE_TITLE: "Pipeline failure: ${{ github.workflow }}"
 
   notify-failure:
     if: ${{ failure() }}
@@ -250,17 +250,15 @@ jobs:
 
           EXISTING=$(gh issue list \
             --repo "${{ github.repository }}" \
-            --label "ci" \
             --state all \
-            --limit 1 \
-            --json number,state \
-            --jq '.[0]')
+            --limit 100 \
+            --json number,state,title | jq -c --arg title "$ISSUE_TITLE" \
+            '.[] | select(.title == $title) | {number, state}' | head -n 1)
 
-          if [ -z "$EXISTING" ] || [ "$EXISTING" = "null" ]; then
+          if [ -z "$EXISTING" ]; then
             gh issue create \
               --repo "${{ github.repository }}" \
-              --title "Pipeline failure: ${{ github.workflow }}" \
-              --label "ci" \
+              --title "$ISSUE_TITLE" \
               --body "$BODY"
           else
             NUMBER=$(echo "$EXISTING" | jq -r '.number')
@@ -274,3 +272,4 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
+          ISSUE_TITLE: "Pipeline failure: ${{ github.workflow }}"
